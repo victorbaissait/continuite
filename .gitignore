@@ -1,0 +1,15 @@
+# Données de la série : sauvegardées par Config → Sauvegardes, pas par git
+# Tout le dossier data/ : bases, projets, sauvegardes, caches, images du storyboard et des cartes
+data/*
+!data/.htaccess
+uploads/*
+
+.DS_Store
+data/imports/
+data/cartes/
+data/secrets-scenes.json
+
+# App de bureau
+/node_modules/
+/vendor/
+/dist/

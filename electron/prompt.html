@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Question</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 18px 20px; font: 14px system-ui, sans-serif; background: #111; color: #e8e8e0; display: flex; flex-direction: column; gap: 12px; height: 100vh; box-sizing: border-box; }
+  p { margin: 0; line-height: 1.4; }
+  input { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid #333; background: #0a0a0a; color: inherit; }
+  input:focus { outline: 2px solid #67cbac; outline-offset: 1px; }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid #333; background: #1a1a1a; color: inherit; cursor: pointer; }
+  button.ok { background: #67cbac; color: #0a0a0a; border-color: #67cbac; font-weight: 600; }
+</style>
+</head>
+<body>
+<p id="message"></p>
+<input id="valeur" type="text" autofocus>
+<div class="actions"><button type="button" id="annuler">Annuler</button><button type="button" class="ok" id="ok">OK</button></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  document.getElementById('message').textContent = q.get('m') || '';
+  const champ = document.getElementById('valeur');
+  champ.value = q.get('d') || '';
+  champ.select();
+  document.getElementById('ok').onclick = () => window.invite.repondre(champ.value);
+  document.getElementById('annuler').onclick = () => window.invite.repondre(null);
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter') window.invite.repondre(champ.value);
+    if (e.key === 'Escape') window.invite.repondre(null);
+  });
+</script>
+</body>
+</html>

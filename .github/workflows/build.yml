@@ -1,0 +1,119 @@
+# Fabrication des installateurs de Continuité (macOS, Windows, Linux).
+#
+# - Lancement manuel : onglet « Actions » → « Installateurs » → « Run workflow » (fichiers dans « Artifacts », gardés 3 jours).
+# - Nouvelle version : pousser une étiquette, ex. « git tag v1.0.0 && git push origin v1.0.0 » → les installateurs
+#   vont dans un BROUILLON de version (onglet « Releases »), à publier à la main.
+#
+# Chaque machine télécharge le PHP embarqué (vérifié par empreinte sha256), essaie le serveur, puis fabrique.
+# Le garde-fou (electron/build/hooks.js) arrête tout si une base ou une sauvegarde se trouvait dans l'app.
+
+name: Installateurs
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Brouillon de version
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Créer le brouillon, sauf s'il existe déjà
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R: ${{ github.repository }}
+          T: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if gh release view "$T" --repo "$R" >/dev/null 2>&1; then echo "Brouillon $T déjà là"; exit 0; fi
+          gh release create "$T" --draft --repo "$R" --target "$SHA" --title "Continuité $T" --notes "Installateurs de Continuité $T — vérifie les empreintes dans les fichiers SHA256SUMS."
+
+  build:
+    name: ${{ matrix.name }}
+    needs: prepare
+    if: ${{ !cancelled() && needs.prepare.result != 'failure' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon + Intel)
+            os: macos-15
+            php: darwin-arm64 darwin-x64
+            dist: --mac --arm64 --x64
+          - name: Windows (x64)
+            os: windows-2025
+            php: win32-x64
+            dist: --win --x64
+          - name: Linux (x64 + ARM)
+            os: ubuntu-22.04
+            php: linux-x64 linux-arm64
+            dist: --linux --x64 --arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: PHP embarqué (téléchargé et vérifié par empreinte sha256)
+        shell: bash
+        run: for key in ${{ matrix.php }}; do node electron/fetch-php.js "$key"; done
+
+      - name: Composant Microsoft Visual C++ (officiel, signature vérifiée)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vendor/vcredist | Out-Null
+          Invoke-WebRequest -Uri https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile vendor/vcredist/vc_redist.x64.exe
+          $sig = Get-AuthenticodeSignature vendor/vcredist/vc_redist.x64.exe
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw "Signature Microsoft invalide : $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+
+      - name: Essai du serveur PHP (secret, dossiers interdits, API)
+        run: npm run test:serveur
+
+      - name: Fabrication des installateurs
+        run: npx electron-builder ${{ matrix.dist }} --publish never
+
+      - name: Envoi dans le brouillon de version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          shopt -s nullglob
+          files=(*.dmg *.exe *.AppImage *.deb)
+          test ${#files[@]} -gt 0
+          if command -v sha256sum >/dev/null; then sum="sha256sum"; else sum="shasum -a 256"; fi
+          $sum "${files[@]}" > "SHA256SUMS-${{ runner.os }}.txt" && cat "SHA256SUMS-${{ runner.os }}.txt"
+          gh release upload "${{ github.ref_name }}" "${files[@]}" "SHA256SUMS-${{ runner.os }}.txt" --clobber --repo "${{ github.repository }}"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        with:
+          name: Continuite-${{ runner.os }}
+          if-no-files-found: error
+          retention-days: 3
+          path: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb

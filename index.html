@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- La page ne parle qu'à son propre serveur : même un texte piégé ne pourrait rien envoyer ailleurs -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; frame-src 'self' blob: data:; object-src 'none'; base-uri 'self'; form-action 'self'">
+<title>Continuité</title>
+<link rel="stylesheet" href="assets/css/polices.css">
+<link rel="stylesheet" href="assets/css/main.css?v=20261108-dr1">
+<link rel="stylesheet" href="assets/css/journal.css">
+<link rel="stylesheet" href="assets/css/diff.css">
+<link rel="stylesheet" href="assets/css/lecteurs.css?v=20260716-lecteurs-priorites">
+<script src="assets/vendor/pdfjs/pdf.min.js"></script>
+  
+</head>
+<body>
+
+<div id="app">
+  <!-- HEADER -->
+  <header id="header">
+    <div class="header-brand">
+      <button type="button" id="projets-bouton" class="projets-bouton" aria-label="Changer de projet" aria-haspopup="true" aria-expanded="false" onclick="Projets.basculerMenu()">
+        <span class="brand-icon"></span>
+        <span class="brand-name">Continuité</span>
+        <span aria-hidden="true">▾</span>
+      </button>
+      <div id="projets-menu" class="projets-menu" role="menu" aria-label="Changer de projet" hidden></div>
+    </div>
+    <nav id="main-nav">
+      <button class="nav-btn active" data-tab="episodes">
+        <span class="nav-icon">⊞</span> Épisodes
+      </button>
+      <button class="nav-btn" data-tab="ecriture">
+        <span class="nav-icon">✎</span> Écriture
+      </button>
+      <button class="nav-btn" data-tab="personnages">
+        <span class="nav-icon">◎</span> Persos
+      </button>
+      <button class="nav-btn" data-tab="decors">
+        <span class="nav-icon">⬡</span> Décors
+      </button>
+      <button class="nav-btn" data-tab="frise">
+        <span class="nav-icon">⊷</span> Frise
+      </button>
+      <button class="nav-btn" data-tab="themes">
+        <span class="nav-icon">◈</span> Thèmes
+      </button>
+     <button class="nav-btn" data-tab="suivi">
+    <span class="nav-icon">◫</span> Suivi
+    </button>
+      <button class="nav-btn" data-tab="analyse">
+        <span class="nav-icon">⊹</span> Analyse
+      </button>
+      <!--<button class="nav-btn" data-tab="miroirs">
+        <span class="nav-icon">⇄</span> Miroirs
+      </button>-->
+      <button class="nav-btn" data-tab="batch">
+     <span class="nav-icon">⊿</span> Batch
+     </button>
+      <button class="nav-btn" data-tab="recherche">
+     <span class="nav-icon">⌕</span> Recherche
+     </button>
+      <button class="nav-btn" data-tab="journal">
+        <span class="nav-icon">◷</span> Journal
+      </button>
+      <button class="nav-btn" data-tab="lecteurs">
+        <span class="nav-icon">◉</span> Lecteurs
+      </button>
+      <button class="nav-btn" data-tab="settings">
+        <span class="nav-icon">⚙</span> Config
+      </button>
+    </nav>
+  </header>
+
+  <!-- TABS -->
+  <main id="content">
+    <div id="tab-episodes" class="tab active"></div>
+    <div id="tab-ecriture" class="tab"></div>
+    <div id="tab-personnages" class="tab"></div>
+    <div id="tab-decors" class="tab"></div>
+    <div id="tab-frise" class="tab"></div>
+    <div id="tab-themes" class="tab"></div>
+    <div id="tab-suivi" class="tab"></div>
+    <div id="tab-analyse" class="tab"></div>
+    <div id="tab-miroirs" class="tab"></div>
+    <div id="tab-batch" class="tab"></div>
+    <div id="tab-recherche" class="tab"></div>
+    <div id="tab-journal" class="tab"></div>
+    <div id="tab-lecteurs" class="tab"></div>
+    <div id="tab-settings" class="tab"></div>
+  </main>
+</div>
+
+<!-- MODAL -->
+<div id="modal-overlay" class="hidden">
+  <div id="modal">
+    <button id="modal-close">✕</button>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast-container"></div>
+
+<script src="assets/js/api.js?v=20261124-fin"></script>
+<script src="assets/js/episodes.js?v=20261031-couleurcol"></script>
+<script src="assets/js/personnages.js?v=20261124-app2"></script>
+<script src="assets/js/decors.js?v=20261124-app2"></script>
+<script src="assets/js/frise.js?v=20261108-rp1"></script>
+<script src="assets/js/themes.js?v=20261124-fin"></script>
+<script src="assets/js/suivi.js?v=20261031-fiabilite"></script>
+<script src="assets/js/analyse-calcul.js?v=20261124-fin"></script>
+<script src="assets/js/analyse.js?v=20261124-fin"></script>
+<script src="assets/js/ecriture.js?v=20261124-fin"></script>
+<script src="assets/js/roman.js?v=20261107-at1"></script>
+<script src="assets/js/storyboard.js?v=20261124-sec1"></script>
+<script src="assets/js/production.js?v=20261107-at1"></script>
+<script src="assets/js/genres.js?v=20261107-at1"></script>
+<script src="assets/js/atelier.js?v=20261107-at1"></script>
+<script src="assets/js/comparateur.js?v=20261031-diff"></script>
+<script src="assets/js/miroirs.js?v=20261031-fiabilite"></script>
+<script src="assets/js/journal.js?v=20261031-fiabilite"></script>
+<script src="assets/js/lecteurs.js?v=20261031-fiabilite"></script>
+<script src="assets/js/settings.js?v=20261107-mo1"></script>
+<script src="assets/js/diff.js?v=20261124-sec1"></script>
+<script src="assets/js/bible.js?v=20261108-bs2"></script>
+<script src="assets/js/batch.js?v=20261101-projets"></script>
+<script src="assets/js/recherche.js?v=20261031-colonnes"></script>
+<script src="assets/js/interface.js?v=20261124-app1"></script>
+<script src="assets/js/projets.js?v=20261124-fin"></script>
+<script src="assets/js/mondes.js?v=20261108-rc2"></script>
+<script src="assets/js/secrets.js?v=20261124-fin"></script>
+<script src="assets/js/dramaturgie.js?v=20261124-app2"></script>
+<script src="assets/js/app.js?v=20261101-projets"></script>
+</body>
+</html>

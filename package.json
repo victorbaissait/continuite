@@ -1,0 +1,116 @@
+{
+  "name": "continuite",
+  "productName": "Continuité",
+  "dossierDonnees": "Continuite",
+  "version": "1.0.0",
+  "description": "Atelier d'écriture local pour séries, films, romans, BD, théâtre, pub et jeux : personnages, secrets, continuité. Les données restent sur l'ordinateur.",
+  "private": true,
+  "main": "electron/main.js",
+  "license": "AGPL-3.0-or-later",
+  "author": {
+    "name": "Victor Baissait"
+  },
+  "scripts": {
+    "start": "electron .",
+    "start:local": "electron . --use-project-data",
+    "fetch:php": "node electron/fetch-php.js",
+    "dist:mac": "electron-builder --mac --arm64 --x64",
+    "dist:win": "electron-builder --win --x64",
+    "dist:linux": "electron-builder --linux --x64",
+    "test:serveur": "node electron/test-serveur.js"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "fr.victorbaissait.continuite",
+    "productName": "Continuite",
+    "copyright": "Copyright © 2026 Victor Baissait — AGPL-3.0-or-later",
+    "directories": {
+      "output": "dist",
+      "buildResources": "electron/build"
+    },
+    "asar": true,
+    "files": [
+      "package.json",
+      "electron/main.js",
+      "electron/php-server.js",
+      "electron/preload.js",
+      "electron/prompt-preload.js",
+      "electron/prompt.html",
+      "electron/loading.html"
+    ],
+    "extraResources": [
+      {
+        "from": ".",
+        "to": "php-app",
+        "filter": [
+          "index.html",
+          "router.php",
+          "api/**/*",
+          "assets/**/*",
+          "!**/.DS_Store"
+        ]
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
+      }
+    ],
+    "afterPack": "electron/build/hooks.js",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg"
+      ],
+      "identity": "-",
+      "hardenedRuntime": false,
+      "artifactName": "Continuite-${version}-mac-${arch}.${ext}",
+      "extendInfo": {
+        "CFBundleDisplayName": "Continuité"
+      },
+      "icon": "electron/build/icon.png"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Continuite-${version}-windows-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "vendor/vcredist/vc_redist.x64.exe",
+          "to": "vc_redist.x64.exe"
+        }
+      ],
+      "icon": "electron/build/icon-carre.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "license": "LICENSE",
+      "include": "electron/build/installer.nsh",
+      "shortcutName": "Continuité",
+      "uninstallDisplayName": "Continuité"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "maintainer": "Victor Baissait",
+      "executableName": "continuite",
+      "artifactName": "Continuite-${version}-linux-${arch}.${ext}",
+      "desktop": {
+        "entry": {
+          "Name": "Continuité",
+          "Comment": "Atelier d'écriture local : séries, films, romans, BD, théâtre"
+        }
+      },
+      "icon": "electron/build/icon-carre.png"
+    },
+    "publish": null
+  }
+}
