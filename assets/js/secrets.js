@@ -291,6 +291,12 @@ const Reperes = {
         const de = /^le /.test(a.fete) ? a.fete.replace(/^le /, 'du ') : /^les /.test(a.fete) ? a.fete.replace(/^les /, 'des ') : /^[aeiouyhéèêâ]/i.test(a.fete) ? `d'${a.fete}` : `de ${a.fete}`;
         return `${c(a.ep)} se passe en ${esc(a.mois)}, mais on y parle ${esc(de)}.`;
       }
+      case 'anachronisme': {
+        // « de » + article : d'un smartphone, du wifi, de l'euro, de la…, de Facebook
+        const q = a.quoi;
+        const de = /^une? /i.test(q) ? `d'${q}` : /^le /i.test(q) ? `du ${q.slice(3)}` : /^(l'|la )/i.test(q) ? `de ${q}` : /^[aeiouyhéèêâ]/i.test(q) ? `d'${q}` : `de ${q}`;
+        return `${c(a.ep)} se passe en ${a.annee}, mais on y parle ${esc(de)}, qui n'existe qu'à partir de ${a.depuis}.`;
+      }
       case 'jour': return `${c(a.ep)} est daté un ${esc(a.vrai)}, mais on y dit qu'on est ${esc(a.dit)}.`;
       case 'chevauche': return `${c(a.ep)} et ${c(a.autre)} se passent tous deux le ${esc(this._date(a.date))}, ${esc(this._moment(a.moment))} : ${esc(a.qui.join(', '))} ${a.qui.length > 1 ? 'sont' : 'est'} dans les deux.`;
       case 'age': return `${esc(a.nom)} dit avoir ${a.dit} ans en ${c(a.ep)}, et avait déjà ${a.ditAvant} ans en ${c(a.avant)} : il ou elle en aurait plutôt ${a.attendu}.`;
@@ -306,7 +312,7 @@ const Reperes = {
       slot.innerHTML = `<div class="empty-state"><div class="empty-icon">⊷</div><div class="empty-title">Aucun épisode daté</div><div class="empty-sub">Donne une date dans l'histoire aux épisodes (dans leur fiche) : l’app vérifiera les fêtes, les jours de la semaine, les âges et les anniversaires.</div></div>`;
       return;
     }
-    const groupes = [['fete', 'Fêtes et saisons hors de leur moment'], ['jour', 'Jour de la semaine'], ['chevauche', 'Deux épisodes au même moment'], ['age', 'Âges qui ne suivent pas le temps']];
+    const groupes = [['anachronisme', 'Anachronismes'], ['fete', 'Fêtes et saisons hors de leur moment'], ['jour', 'Jour de la semaine'], ['chevauche', 'Deux épisodes au même moment'], ['age', 'Âges qui ne suivent pas le temps']];
     const json = v => esc(JSON.stringify(v));
     slot.innerHTML = `
       <div class="ct-grille">

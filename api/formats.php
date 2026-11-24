@@ -21,12 +21,15 @@ function extraireTexte(string $nom, string $octets): string {
         case 'highland': return texteHighland($octets);
         case 'fadein': return texteFadeIn($octets);
         case 'celtx': return texteCeltx($octets);
+        case 'montage': return texteMontage($octets);
         case 'wdz': throw new RuntimeException('WriterDuet garde son texte dans un format fermé : exporte le scénario en Final Draft (.fdx) ou en Fountain.');
         case 'scw': case 'mmsw': throw new RuntimeException('Ce format de Movie Magic n\'est pas lisible : exporte le scénario en Final Draft (.fdx) ou en RTF.');
         case 'pages': throw new RuntimeException('Pages garde son texte dans un format illisible : exporte-le en Word (Fichier → Exporter vers → Word).');
         case 'doc': throw new RuntimeException('L\'ancien format .doc n\'est pas lisible : enregistre le fichier en .docx.');
         case 'gdoc': throw new RuntimeException('Un raccourci Google Docs ne contient pas le texte : passe par Fichier → Télécharger → Microsoft Word.');
-        default: return decoderTexte($octets);
+        case 'txt': case 'fountain': case 'spmd': case 'md': case 'markdown': case 'text':
+            return ressembleATexte($octets) ? decoderTexte($octets) : texteSelonContenu($octets);
+        default: return texteSelonContenu($octets);
     }
 }
 

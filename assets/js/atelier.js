@@ -34,6 +34,10 @@ const Lecture = {
 
   async ouvrir() {
     this.arreter();
+    // Un autre épisode : le partage du précédent s'arrête
+    if (this.reseau) { await window.bureau?.reseau?.('arreter'); this.reseau = null; }
+    this.surLigne = null;
+    this.surFin = null;
     const e = Atelier.ep();
     if (!e) return;
     this.data = await api.get(`ecriture_sb&episode_id=${e.id}`);
@@ -83,12 +87,18 @@ const Lecture = {
       <div class="an-ligne lec-barre">
         <button type="button" class="btn btn-primary btn-sm" onclick="Lecture.basculer()">${this.enCours ? '❚❚ Pause' : this.i ? '▶ Reprendre' : '▶ Lire depuis le début'}</button>
         <button type="button" class="btn btn-ghost btn-sm" onclick="Lecture.recommencer()">Recommencer</button>
+        ${window.bureau?.reseau ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Lecture.partager()">${this.reseau ? 'Partage en cours' : 'Lire à plusieurs (Wi-Fi)'}</button>` : ''}
+        <button type="button" class="btn btn-secondary btn-sm" title="Le texte qui défile en grand" onclick="Prompteur.ouvrir(Lecture.lignes.map(l => ({ type: l.qui ? 'dialogue' : 'action', qui: l.qui, texte: l.texte })), Ecriture._titreEp())">Prompteur</button>
         <label class="an-label" for="lec-vitesse">Vitesse</label>
         <select id="lec-vitesse" onchange="Lecture.vitesse = Number(this.value)">${[0.8, 0.9, 1, 1.1, 1.25, 1.5].map(v => `<option value="${v}" ${v === this.vitesse ? 'selected' : ''}>${String(v).replace('.', ',')}×</option>`).join('')}</select>
         <label class="mep-coche"><input type="checkbox" ${this.didascalies ? 'checked' : ''} onchange="Lecture.didascalies = this.checked"><span>Lire aussi les didascalies</span></label>
         <span class="an-note" id="lec-chrono">${this.enCours ? 'lecture…' : ''}</span>
       </div>
       ${'speechSynthesis' in window ? '' : '<p class="an-note ec-orange">Ce navigateur ne sait pas lire à voix haute.</p>'}
+      ${this.reseau ? `<section class="an-carte lec-reseau"><div class="an-entete"><h2 class="an-titre">Lecture à plusieurs</h2><button type="button" class="btn btn-ghost btn-sm" onclick="Lecture.arreterPartage()">Arrêter le partage</button></div>
+        <p>Sur chaque téléphone, connecté au même Wi-Fi, ouvre :</p>
+        ${(this.reseau.urls || []).map(u => `<p class="lec-url"><code>${esc(u)}</code> <button type="button" class="ec-lien" onclick="navigator.clipboard?.writeText('${esc(u)}').then(() => toast('Adresse copiée', 'success'))">copier</button></p>`).join('') || '<p class="an-note ec-orange">Aucun réseau trouvé : cet ordinateur n\'est connecté à aucun Wi-Fi.</p>'}
+        <p class="an-note">Chacun choisit son rôle : ses répliques sont surlignées, et la ligne lue ici avance chez tout le monde (clique une ligne pour y aller). Tant que le partage est actif, une personne du même réseau qui a l'adresse peut lire cet épisode, rien d'autre et sans rien modifier. Il s'arrête de lui-même dans 4 heures, et quand tu fermes l'app.</p></section>` : ''}
       <div class="sb-grille">
         <section class="an-carte">
           <div class="an-entete"><h2 class="an-titre">${esc(courante?.slug || '')}</h2><span class="an-note">${this.i + 1} / ${this.lignes.length}</span></div>
@@ -111,10 +121,27 @@ const Lecture = {
     `;
   },
 
+  async partager() {
+    if (this.reseau) return;
+    const e = Atelier.ep();
+    const r = await window.bureau.reseau('demarrer', { titre: e ? `${Ecriture._code(e)}${e.t ? ` — ${e.t}` : ''}` : '', lignes: this.lignes.map(l => ({ qui: l.qui || '', texte: l.texte })) });
+    if (r?.error) { toast(r.error, 'error'); return; }
+    this.reseau = r;
+    window.bureau.reseau('position', { i: this.i });
+    this.rendre();
+  },
+
+  async arreterPartage() {
+    await window.bureau.reseau('arreter');
+    this.reseau = null;
+    this.rendre();
+  },
+
   aller(k) {
     const reprendre = this.enCours;
     this.arreter();
     this.i = Math.max(0, Math.min(this.lignes.length - 1, Number(k) || 0));
+    if (this.reseau) window.bureau.reseau('position', { i: this.i });
     this.rendre();
     if (reprendre) this.basculer();
   },
@@ -145,12 +172,14 @@ const Lecture = {
   _suivante() {
     if (!this.enCours) return;
     const l = this.lignes[this.i];
-    if (!l) { this._finScene(); this.arreter(); this.rendre(); return; }
+    if (!l) { this._finScene(); this.arreter(); this.rendre(); this.surFin?.(); return; }
     if (l.scene !== this._sceneDebut.i) { this._finScene(); this._sceneDebut = { i: l.scene, t: performance.now() }; }
     document.querySelectorAll('.lec-l.actif').forEach(p => p.classList.remove('actif'));
     const p = document.querySelector(`.lec-l[data-k="${this.i}"]`);
     if (p) { p.classList.add('actif'); p.scrollIntoView({ block: 'nearest' }); }
     if (!l.qui && !this.didascalies) { this.i++; this._suivante(); return; }
+    this.surLigne?.(l);
+    if (this.reseau) window.bureau.reseau('position', { i: this.i });
     const u = new SpeechSynthesisUtterance(l.texte);
     const { voix, hauteur } = this._pour(l.qui);
     if (voix) { u.voice = voix; u.lang = voix.lang; }
@@ -182,6 +211,103 @@ const Lecture = {
 
 const Versions = {
   liste: [],
+  images: null,
+  k: 0,
+  minuteur: null,
+
+  // ─── Le chutier : les scènes coupées de toute la série, gardées dans les versions, à retrouver ou reprendre ───
+
+  async chutier() {
+    const slot = Atelier.slot();
+    if (!slot) return;
+    slot.innerHTML = '<p class="an-note">Recherche des scènes coupées…</p>';
+    this.chute = (await api.get('chutier')).scenes || [];
+    this.chuteQ = '';
+    this.rendreChutier();
+  },
+
+  rendreChutier() {
+    const slot = Atelier.slot();
+    if (!slot || !this.chute) return;
+    const plat = t => String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const q = plat(this.chuteQ || '');
+    const liste = q ? this.chute.filter(c => plat(`${c.slug} ${c.texte} ${c.code}`).includes(q)) : this.chute;
+    slot.innerHTML = `
+      <div class="an-ligne ver-barre"><input id="chute-q" class="an-recherche" type="text" placeholder="Chercher une scène coupée…" aria-label="Chercher dans le chutier" value="${esc(this.chuteQ || '')}" oninput="Versions.chuteQ = this.value; Versions.rendreChutier(); document.getElementById('chute-q').focus()">
+        <span class="an-note">${liste.length} scène(s) sur ${this.chute.length}</span>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="Versions.chute = null; Versions.rendre()">Comparer deux versions</button></div>
+      <p class="an-note">Les scènes qui ne sont plus dans le script ni dans le brouillon, retrouvées dans les versions gardées de toute la série. « Copier » met la scène dans le presse-papiers, pour la recoller où tu veux.</p>
+      ${liste.length ? liste.slice(0, 200).map((c, i) => `<details class="an-carte chute"><summary><strong class="vo-brut">${esc(c.slug)}</strong> · ${esc(c.code)} ${esc(c.titre || '')} <span class="an-note">${c.mots} mots · version du ${esc(c.version)}</span></summary>
+        <pre class="chute-texte vo-brut">${esc(c.texte)}</pre><button type="button" class="btn btn-ghost btn-sm" onclick="navigator.clipboard?.writeText(Versions.chute[${this.chute.indexOf(c)}].texte).then(() => toast('Scène copiée', 'success'))">Copier</button></details>`).join('') : '<section class="an-carte"><p class="an-note">Aucune scène coupée : tout ce qui a été écrit est encore là (ou n\'a pas été gardé dans une version).</p></section>'}`;
+  },
+
+  // ─── Le film de l'écriture : chaque version gardée devient une image, on voit les scènes naître, changer, partir ───
+
+  async film() {
+    const slot = Atelier.slot();
+    if (!slot) return;
+    slot.innerHTML = '<p class="an-note">Les versions se chargent…</p>';
+    const anciennes = [...this.liste].sort((x, y) => x.id - y.id);
+    const images = [];
+    for (const v of anciennes) images.push({ titre: `${v.cree_le}${v.motif ? ` · ${v.motif}` : ''}`, texte: await this._texte(`v${v.id}`) });
+    images.push({ titre: 'Script validé', texte: this.textes.script });
+    if (!this.sansBrouillon) images.push({ titre: 'Brouillon en cours', texte: this.textes.brouillon });
+    this.images = images.filter(i => i.texte.trim()).map(i => ({ ...i, scenes: Ecriture._scenesEmpreintes(i.texte), mots: (i.texte.match(/\S+/g) || []).length }));
+    this.k = 0;
+    this.rendreFilm();
+  },
+
+  rendreFilm() {
+    const slot = Atelier.slot();
+    const im = this.images;
+    if (!slot || !im) return;
+    if (im.length < 2) { slot.innerHTML = '<section class="an-carte"><p class="an-note">Il faut au moins deux versions pour rejouer l\'écriture.</p><button type="button" class="btn btn-ghost btn-sm" onclick="Versions.quitterFilm()">Retour</button></section>'; return; }
+    const ici = im[this.k];
+    const avant = this.k ? im[this.k - 1] : null;
+    const titresAvant = new Map((avant?.scenes || []).map(s => [s.titre, s.h]));
+    const empreintesAvant = new Set((avant?.scenes || []).map(s => s.h));
+    const titresIci = new Set(ici.scenes.map(s => s.titre));
+    const etat = s => (!avant ? '' : empreintesAvant.has(s.h) ? '' : titresAvant.has(s.titre) ? 'changee' : 'nouvelle');
+    const parties = avant ? avant.scenes.filter(s => !titresIci.has(s.titre) && !ici.scenes.some(x => x.h === s.h)) : [];
+    const max = Math.max(...im.map(i => i.mots), 1);
+    slot.innerHTML = `
+      <div class="an-ligne ver-barre">
+        <button type="button" class="btn btn-primary btn-sm" onclick="Versions.lecture()">${this.minuteur ? '❚❚ Pause' : '▶ Lecture'}</button>
+        <input type="range" min="0" max="${im.length - 1}" value="${this.k}" aria-label="Version" oninput="Versions.aller(Number(this.value))" class="film-curseur">
+        <span class="an-note">${this.k + 1} / ${im.length} · ${esc(ici.titre)}</span>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="Versions.quitterFilm()">Comparer deux versions</button>
+      </div>
+      <div class="film-mots" role="img" aria-label="Nombre de mots à chaque version">${im.map((x, k) => `<span class="${k === this.k ? 'actif' : ''}" style="height:${Math.round((x.mots * 100) / max)}%" title="${esc(x.titre)} : ${x.mots} mots" onclick="Versions.aller(${k})"></span>`).join('')}</div>
+      <section class="an-carte">
+        <div class="an-entete"><h2 class="an-titre">${ici.scenes.length} scène(s) · ${Analyse._fr(ici.mots)} mots</h2>
+          <span class="an-note">${avant ? `<span class="ver-ajout">nouvelle</span> · <span class="ver-deplace">réécrite</span> · <span class="ver-coupe">partie</span>` : 'La première version gardée'}</span></div>
+        <ol class="film-scenes">${ici.scenes.map(s => `<li class="${etat(s)}">${esc(s.titre)}</li>`).join('')}${parties.map(s => `<li class="partie">${esc(s.titre)}</li>`).join('')}</ol>
+      </section>`;
+  },
+
+  aller(k) {
+    this.k = Math.max(0, Math.min((this.images?.length || 1) - 1, k));
+    this.rendreFilm();
+  },
+
+  lecture() {
+    if (this.minuteur) { clearInterval(this.minuteur); this.minuteur = null; this.rendreFilm(); return; }
+    if (this.k >= this.images.length - 1) this.k = 0;
+    this.minuteur = setInterval(() => {
+      if (!Atelier.slot() || !this.images) { clearInterval(this.minuteur); this.minuteur = null; return; }
+      if (this.k >= this.images.length - 1) { clearInterval(this.minuteur); this.minuteur = null; this.rendreFilm(); return; }
+      this.aller(this.k + 1);
+    }, 1600);
+    this.rendreFilm();
+  },
+
+  quitterFilm() {
+    clearInterval(this.minuteur);
+    this.minuteur = null;
+    this.images = null;
+    this.rendre();
+  },
+
   a: 'script',
   b: 'brouillon',
   textes: {},
@@ -247,7 +373,9 @@ const Versions = {
     const classe = { '-': 'ver-coupe', '+': 'ver-ajout', '<': 'ver-deplace', '>': 'ver-deplace', '=': '' };
     const select = (id, valeur) => `<select id="${id}" onchange="Versions.${id === 'ver-a' ? 'a' : 'b'} = this.value; Versions.rendre()">${choix.map(([v, l]) => `<option value="${esc(v)}" ${v === valeur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
     slot.innerHTML = `
-      <div class="an-ligne ver-barre"><label class="an-label" for="ver-a">Avant</label>${select('ver-a', this.a)}<label class="an-label" for="ver-b">Après</label>${select('ver-b', this.b)}</div>
+      <div class="an-ligne ver-barre"><label class="an-label" for="ver-a">Avant</label>${select('ver-a', this.a)}<label class="an-label" for="ver-b">Après</label>${select('ver-b', this.b)}
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Versions.film()">▶ Rejouer l'écriture</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Versions.chutier()">Chutier</button></div>
       <p class="an-note"><span class="ver-ajout">${nb('+')} ligne(s) ajoutée(s) (+${mots('+')} mots)</span> · <span class="ver-coupe">${nb('-')} coupée(s) (−${mots('-')} mots)</span> · <span class="ver-deplace">${nb('>')} déplacée(s)</span>. Les versions viennent du Brouillon (« Garder une version ») ; le script validé est celui qu'analyse l'app.</p>
       <div class="ver-cote">
         <section class="an-carte"><h2 class="an-titre">Avant</h2><div class="ver-texte">${gauche.map(o => `<div class="${classe[o.s]}">${esc(o.t) || '&nbsp;'}</div>`).join('')}</div></section>
@@ -459,5 +587,243 @@ const Budget = {
     Ecriture.noterPlusTard('budget', '');
     Ecriture.notes.budget = '';
     this.rendre();
+  },
+};
+
+// ─── Le prompteur : le texte défile en grand, à la vitesse choisie (lecture à voix haute, voix témoin) ───
+const Prompteur = {
+  vitesse: 40,
+  taille: 44,
+  miroir: false,
+  enCours: false,
+
+  depuisTexte(texte, titre) {
+    let qui = null;
+    const lignes = [];
+    Ecriture.classerLignes(texte).forEach(l => {
+      const t = l.ligne.trim();
+      if (l.type === 'vide' || l.type === 'note' || !t) { if (l.type === 'vide') qui = null; return; }
+      if (l.type === 'perso') { qui = t.replace(/\s*\(.*\)$/, ''); return; }
+      lignes.push({ type: l.type, qui: l.type === 'dialogue' || l.type === 'parenthese' ? qui : null, texte: t });
+    });
+    this.ouvrir(lignes, titre);
+  },
+
+  ouvrir(lignes, titre = '') {
+    if (!lignes.length) { toast('Rien à faire défiler.', 'info'); return; }
+    this.fermer();
+    try { Object.assign(this, JSON.parse(localStorage.getItem('prompteur') || '{}')); } catch (e) { /* réglages par défaut */ }
+    const fond = document.createElement('div');
+    fond.id = 'prompteur';
+    fond.className = 'prompteur';
+    fond.setAttribute('role', 'dialog');
+    fond.setAttribute('aria-label', 'Prompteur');
+    let precedent = null;
+    fond.innerHTML = `<div class="prompteur-barre">
+        <button type="button" data-a="lire">▶</button><button type="button" data-a="debut" title="Revenir au début">⟲</button>
+        <span>Vitesse</span><button type="button" data-a="lent">−</button><b id="pr-vitesse"></b><button type="button" data-a="vite">+</button>
+        <span>Taille</span><button type="button" data-a="petit">A−</button><button type="button" data-a="grand">A+</button>
+        <button type="button" data-a="miroir" title="Texte inversé, pour une vitre de prompteur">Miroir</button>
+        <span class="prompteur-aide">Espace : lire/pause · ↑↓ : vitesse · Échap : fermer</span>
+        <button type="button" data-a="fermer">Fermer</button></div>
+      <div class="prompteur-defile"><div class="prompteur-texte">${titre ? `<h1>${esc(titre)}</h1>` : ''}${lignes.map(l => {
+        const nom = l.qui && l.qui !== precedent ? `<p class="pr-qui">${esc(l.qui)}</p>` : '';
+        precedent = l.qui || null;
+        return `${nom}<p class="pr-${esc(l.type)}">${esc(l.texte)}</p>`;
+      }).join('')}<p class="pr-fin">— fin —</p></div></div>`;
+    document.body.appendChild(fond);
+    fond.querySelector('.prompteur-barre').addEventListener('click', e => { const a = e.target.closest('button')?.dataset.a; if (a) this.action(a); });
+    this._touches = e => {
+      if (e.key === 'Escape') { e.preventDefault(); this.fermer(); }
+      else if (e.key === ' ') { e.preventDefault(); this.action('lire'); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); this.action('vite'); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); this.action('lent'); }
+    };
+    document.addEventListener('keydown', this._touches, true);
+    this._appliquer();
+  },
+
+  action(a) {
+    const zone = document.querySelector('.prompteur-defile');
+    if (a === 'lire') this.enCours ? this._pause() : this._lire();
+    if (a === 'debut' && zone) zone.scrollTop = 0;
+    if (a === 'vite') this.vitesse = Math.min(400, this.vitesse + 10);
+    if (a === 'lent') this.vitesse = Math.max(10, this.vitesse - 10);
+    if (a === 'grand') this.taille = Math.min(96, this.taille + 6);
+    if (a === 'petit') this.taille = Math.max(20, this.taille - 6);
+    if (a === 'miroir') this.miroir = !this.miroir;
+    if (a === 'fermer') { this.fermer(); return; }
+    try { localStorage.setItem('prompteur', JSON.stringify({ vitesse: this.vitesse, taille: this.taille, miroir: this.miroir })); } catch (e) { /* rien */ }
+    this._appliquer();
+  },
+
+  _appliquer() {
+    const f = document.getElementById('prompteur');
+    if (!f) return;
+    f.style.setProperty('--pr-taille', `${this.taille}px`);
+    f.classList.toggle('miroir', this.miroir);
+    f.querySelector('#pr-vitesse').textContent = this.vitesse;
+    f.querySelector('[data-a="lire"]').textContent = this.enCours ? '❚❚' : '▶';
+  },
+
+  _lire() {
+    this.enCours = true;
+    let t0 = performance.now();
+    let reste = 0;
+    const pas = t => {
+      if (!this.enCours) return;
+      const zone = document.querySelector('.prompteur-defile');
+      if (!zone) { this.enCours = false; return; }
+      reste += (this.vitesse * (t - t0)) / 1000;
+      t0 = t;
+      if (reste >= 1) { zone.scrollTop += Math.floor(reste); reste -= Math.floor(reste); }
+      if (zone.scrollTop + zone.clientHeight >= zone.scrollHeight - 1) { this._pause(); return; }
+      this._raf = requestAnimationFrame(pas);
+    };
+    this._raf = requestAnimationFrame(pas);
+    this._appliquer();
+  },
+
+  _pause() {
+    this.enCours = false;
+    cancelAnimationFrame(this._raf);
+    this._appliquer();
+  },
+
+  fermer() {
+    this._pause();
+    document.getElementById('prompteur')?.remove();
+    if (this._touches) document.removeEventListener('keydown', this._touches, true);
+    this._touches = null;
+  },
+};
+
+// ─── Le bruit de fond du mode concentration : pluie, bruit brun ou rumeur, fabriqués sur place (aucun fichier) ───
+const Ambiance = {
+  SONS: [['', '♪ Silence'], ['pluie', '♪ Pluie'], ['brun', '♪ Bruit brun'], ['rumeur', '♪ Rumeur']],
+  actuel: '',
+  ctx: null,
+  noeuds: [],
+
+  libelle() {
+    return (this.SONS.find(s => s[0] === this.actuel) || this.SONS[0])[1];
+  },
+
+  suivante() {
+    const i = this.SONS.findIndex(s => s[0] === this.actuel);
+    this.jouer(this.SONS[(i + 1) % this.SONS.length][0]);
+  },
+
+  _bruit(type) {
+    const ctx = this.ctx;
+    const n = ctx.sampleRate * 4;
+    const tampon = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = tampon.getChannelData(c);
+      let dernier = 0;
+      for (let i = 0; i < n; i++) {
+        const blanc = Math.random() * 2 - 1;
+        if (type === 'brun') { dernier = (dernier + 0.02 * blanc) / 1.02; d[i] = dernier * 3.5; } else d[i] = blanc;
+      }
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = tampon;
+    src.loop = true;
+    return src;
+  },
+
+  jouer(son) {
+    this.arreter(false);
+    this.actuel = son;
+    const b = document.getElementById('ec-ambiance');
+    if (b) b.textContent = this.libelle();
+    if (!son) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { toast('Le son n\'est pas disponible ici.', 'info'); return; }
+    this.ctx = this.ctx || new AC();
+    this.ctx.resume?.();
+    const ctx = this.ctx;
+    const volume = ctx.createGain();
+    volume.gain.value = 0;
+    volume.gain.linearRampToValueAtTime({ pluie: 0.22, brun: 0.35, rumeur: 0.18 }[son], ctx.currentTime + 1.5);
+    volume.connect(ctx.destination);
+    const src = this._bruit(son === 'brun' ? 'brun' : 'blanc');
+    let chaine = src;
+    if (son === 'pluie') {
+      // Un bruit blanc filtré, avec de petites variations : une averse régulière
+      const passeHaut = ctx.createBiquadFilter(); passeHaut.type = 'highpass'; passeHaut.frequency.value = 900;
+      const passeBas = ctx.createBiquadFilter(); passeBas.type = 'lowpass'; passeBas.frequency.value = 7000;
+      chaine.connect(passeHaut); passeHaut.connect(passeBas); chaine = passeBas;
+      this.noeuds.push(passeHaut, passeBas);
+    } else if (son === 'rumeur') {
+      // Une bande de fréquences de la voix, qui monte et descend lentement : une salle de café au loin
+      const bande = ctx.createBiquadFilter(); bande.type = 'bandpass'; bande.frequency.value = 450; bande.Q.value = 0.9;
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.13;
+      const profondeur = ctx.createGain(); profondeur.gain.value = 160;
+      lfo.connect(profondeur); profondeur.connect(bande.frequency); lfo.start();
+      chaine.connect(bande); chaine = bande;
+      this.noeuds.push(bande, lfo, profondeur);
+    }
+    chaine.connect(volume);
+    src.start();
+    this.noeuds.push(src, volume);
+  },
+
+  arreter(remettre = true) {
+    for (const n of this.noeuds) { try { n.stop?.(); } catch (e) { /* déjà arrêté */ } try { n.disconnect(); } catch (e) { /* rien */ } }
+    this.noeuds = [];
+    if (remettre) {
+      this.actuel = '';
+      const b = document.getElementById('ec-ambiance');
+      if (b) b.textContent = this.libelle();
+    }
+  },
+};
+
+// ─── Le sprint : 25 minutes d'écriture chronométrées, et les mots gagnés pendant la séance ───
+const Sprint = {
+  fin: 0,
+  depart: 0,
+  minuteur: null,
+  minutes: 25,
+
+  _mots() {
+    return ((document.getElementById('ec-brouillon')?.value || '').match(/\S+/g) || []).length;
+  },
+
+  basculer() {
+    if (this.minuteur) { this.terminer(true); return; }
+    this.depart = this._mots();
+    this.debut = Date.now();
+    this.fin = this.debut + this.minutes * 60000;
+    this.minuteur = setInterval(() => this._tic(), 1000);
+    this._tic();
+  },
+
+  _tic() {
+    const reste = Math.max(0, this.fin - Date.now());
+    const b = document.getElementById('ec-sprint');
+    const gagnes = Math.max(0, this._mots() - this.depart);
+    if (b) b.textContent = `⏱ ${Math.floor(reste / 60000)}:${String(Math.floor((reste % 60000) / 1000)).padStart(2, '0')} · +${gagnes} mots`;
+    if (!reste) this.terminer(false);
+  },
+
+  terminer(interrompu) {
+    clearInterval(this.minuteur);
+    this.minuteur = null;
+    const minutes = Math.round((Date.now() - this.debut) / 60000);
+    const mots = Math.max(0, this._mots() - this.depart);
+    const b = document.getElementById('ec-sprint');
+    if (b) b.textContent = '⏱ Sprint';
+    if (minutes < 1) return;
+    let liste = [];
+    try { liste = JSON.parse(Ecriture.notes?.sprints || '[]'); } catch (e) { liste = []; }
+    liste = [...(Array.isArray(liste) ? liste : []), { date: new Date().toISOString(), minutes, mots }].slice(-200);
+    Ecriture.note('sprints', JSON.stringify(liste)).catch(() => {});
+    toast(`${interrompu ? 'Sprint arrêté' : 'Sprint terminé'} : ${mots} mots en ${minutes} min.`, 'success');
+  },
+
+  libelle() {
+    return this.minuteur ? '⏱ …' : '⏱ Sprint';
   },
 };

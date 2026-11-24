@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Continuité est verrouillée</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center; background: #0a0a0a; color: #e8e8e0; font: 15px system-ui, sans-serif; }
+  form { width: min(360px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 12px; text-align: center; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 0; color: #999990; line-height: 1.4; }
+  input { font: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid #333; background: #111; color: inherit; text-align: center; }
+  input:focus { outline: 2px solid #67cbac; outline-offset: 1px; }
+  button { font: inherit; padding: 9px 14px; border-radius: 8px; border: 0; background: #67cbac; color: #0a0a0a; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #message { min-height: 1.4em; color: #ffb454; }
+</style>
+</head>
+<body>
+<form id="f" autocomplete="off">
+  <h1>Continuité est verrouillée</h1>
+  <p>Écris ton mot de passe pour ouvrir tes projets.</p>
+  <input id="mdp" type="password" aria-label="Mot de passe" autofocus>
+  <button id="ok" type="submit">Déverrouiller</button>
+  <p id="message" role="status" aria-live="polite"></p>
+</form>
+<script>
+  const f = document.getElementById('f'), champ = document.getElementById('mdp'), bouton = document.getElementById('ok'), message = document.getElementById('message');
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!champ.value) return;
+    bouton.disabled = true;
+    message.textContent = '';
+    const r = await window.bureau.deverrouiller(champ.value);
+    champ.value = '';
+    bouton.disabled = false;
+    if (r && r.ok) return;
+    message.textContent = r && r.attente ? `Mot de passe incorrect. Attends ${Math.ceil(r.attente / 1000)} s avant de réessayer.` : 'Mot de passe incorrect.';
+    champ.focus();
+  });
+</script>
+</body>
+</html>

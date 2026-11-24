@@ -198,6 +198,7 @@ const Episodes = {
     if (!episodes.length) {
       return `<tr><td colspan="30" class="episodes-empty-cell">
         Aucun épisode — <a href="#" onclick="Episodes.openNewEpisode()" class="episodes-empty-link">Créer le premier</a>
+        <br><span class="an-note">Envie de voir l'app en situation ? <a href="#" onclick="event.preventDefault(); DEMO.proposer()" class="episodes-empty-link">Ouvrir un projet de démonstration</a></span>
       </td></tr>`;
     }
 
@@ -540,13 +541,14 @@ const Episodes = {
                 ondrop="Episodes.handleDrop(event, ${ep.id})">
                 <div class="upload-icon">📄</div>
                 <div class="upload-text">Glisser-déposer ou cliquer pour choisir</div>
-                <div class="upload-hint">.txt, .fountain — le texte sera analysé automatiquement</div>
+                <div class="upload-hint">Fountain, Final Draft, Montage, Word, PDF… ou tout autre fichier</div>
               </div>
-              <input type="file" id="file-input-${ep.id}" accept=".txt,.fountain" style="display:none"
+              <input type="file" id="file-input-${ep.id}" style="display:none"
                 onchange="Episodes.handleFileUpload(event, ${ep.id})">
               <div style="margin-top:12px">
                 <textarea id="texte-direct-${ep.id}" class="episode-direct-textarea" placeholder="Ou coller le texte directement ici…">${esc(ep.texte_episode || '')}</textarea>
                 <button class="btn btn-secondary btn-sm episode-analyse-button" onclick="Episodes.analyseTexte(${ep.id})">Analyser le texte</button>
+                <div id="roles-${ep.id}"></div>
               </div>
             </div>
           </div>
@@ -1141,28 +1143,41 @@ const Episodes = {
   async handleDrop(event, epId) {
     event.preventDefault();
     const file = event.dataTransfer.files[0];
-    if (!file) return;
-    const fd = new FormData();
-    fd.append('fichier', file);
-    fd.append('episode_id', epId);
-    toast('Upload en cours…', 'info');
-    const res = await api.upload(fd);
-    toast(`Analysé ! ${res.nb_repliques_total} répliques, ~${res.nb_mots ? Math.round(res.nb_mots / Settings.motsParMinute) : res.duree_estimee_min} min`, 'success');
-    modal.close();
-    this.openDetail(epId);
+    if (file) await this._deposer(file, epId);
   },
 
   async handleFileUpload(event, epId) {
     const file = event.target.files[0];
-    if (!file) return;
-    const fd = new FormData();
-    fd.append('fichier', file);
-    fd.append('episode_id', epId);
-    toast('Upload en cours…', 'info');
-    const res = await api.upload(fd);
-    toast(`Analysé ! ${res.nb_repliques_total} répliques, ~${res.nb_mots ? Math.round(res.nb_mots / Settings.motsParMinute) : res.duree_estimee_min} min`, 'success');
-    modal.close();
-    this.openDetail(epId);
+    event.target.value = '';
+    if (file) await this._deposer(file, epId);
+  },
+
+  // Un .txt ou un .fountain s'analyse tout de suite ; les autres formats sont d'abord lus,
+  // puis le texte est posé dans la zone pour qu'on le relise avant de cliquer « Analyser »
+  async _deposer(file, epId) {
+    if (/\.(txt|fountain)$/i.test(file.name)) {
+      const fd = new FormData();
+      fd.append('fichier', file);
+      fd.append('episode_id', epId);
+      toast('Upload en cours…', 'info');
+      const res = await api.upload(fd);
+      toast(`Analysé ! ${res.nb_repliques_total} répliques, ~${res.nb_mots ? Math.round(res.nb_mots / Settings.motsParMinute) : res.duree_estimee_min} min`, 'success');
+      modal.close();
+      this.openDetail(epId);
+      return;
+    }
+    toast(`Lecture de ${file.name}…`, 'info');
+    let texte;
+    Projets.rolesTrouves = new Map();
+    try { texte = await Projets._lireTexte(file); }
+    catch (e) { toast(e.message || 'Fichier illisible', 'error'); return; }
+    const zone = document.getElementById(`texte-direct-${epId}`);
+    if (!zone) return;
+    zone.value = texte.trim();
+    zone.focus();
+    zone.scrollIntoView({ block: 'center' });
+    toast('Texte extrait : relis-le, puis clique « Analyser le texte » pour le garder.', 'success');
+    if (Projets.rolesTrouves.size) await Projets.proposerRoles(`roles-${epId}`);
   },
 
   async analyseTexte(epId) {

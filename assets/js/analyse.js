@@ -438,6 +438,22 @@ const Analyse = {
       duree: 'vueDuree', intrigues: 'vueIntrigues', voix: 'vueVoix', mots: 'vueMots', expressions: 'vueExpressions',
     };
     cible.innerHTML = this[vues[this.vue]]();
+    if (this.vue === 'voix') this._chargerRegistres();
+  },
+
+  // Les registres de langue de chaque personnage : tutoiement ou vouvoiement, argot, mots soutenus
+  async _chargerRegistres() {
+    if (!this._registres) this._registres = await api.get('registres').catch(() => null);
+    const slot = document.getElementById('an-registres');
+    const d = this._registres;
+    if (!slot || !d) return;
+    const l = d.personnages;
+    if (!l.length) { slot.innerHTML = '<h2 class="an-titre">Registres de langue</h2><p class="an-note">Pas encore assez de dialogue : il faut au moins 200 mots par personnage pour parler de registre.</p>'; return; }
+    const changent = l.filter(x => x.change);
+    slot.innerHTML = `<div class="an-entete"><h2 class="an-titre">Registres de langue</h2><span class="an-note">pour 1 000 mots</span></div>
+      <p class="an-note">Qui tutoie, qui vouvoie, qui parle argot ou soutenu : une voix tient aussi à son registre. ${changent.length ? `<span class="ec-orange">Registre qui change d'une saison à l'autre : ${changent.map(x => esc(x.nom)).join(', ')}.</span> Voulu (le personnage évolue), ou glissement ?` : 'Chaque personnage garde son registre d\'une saison à l\'autre.'}</p>
+      <div class="an-table"><table><thead><tr><th scope="col">Personnage</th><th scope="col">Tutoie / vouvoie</th><th scope="col">Argot</th><th scope="col">Soutenu</th><th scope="col">Argot par saison</th></tr></thead>
+      <tbody>${l.map(x => { const total = x.tu + x.vous; const pct = total ? Math.round((x.tu * 100) / total) : null; return `<tr class="${x.change ? 'ec-orange' : ''}"><td>${esc(x.nom)}</td><td>${pct === null ? '—' : `${pct} % tu · ${100 - pct} % vous`}</td><td>${this._num(x.argot)}</td><td>${this._num(x.soutenu)}</td><td class="an-note">${Object.entries(x.saisons).map(([s, v]) => `S${s} ${this._num(v)}`).join(' · ') || '—'}</td></tr>`; }).join('')}</tbody></table></div>`;
   },
 
   // ─── Ensemble ────────────────────────────────────────────────────────────
@@ -1263,6 +1279,7 @@ const Analyse = {
           <div class="an-ligne an-lexique">${lexique.map(m => `<button type="button" class="an-mot-nuage" title="${m.n} emplois · ${m.ailleurs} chez les autres" style="font-size:${Math.round(15 + 17 * Math.sqrt(m.n / mx))}px" onclick="Analyse.regler('voixQ', ${esc(JSON.stringify(m.mot))})">${esc(m.affiche)} <small class="an-note">${m.n}</small></button>`).join('') || '<span class="an-note">Aucun mot avec ces réglages.</span>'}</div>
         </section>`;
       }).join('')}</div>
+      <section class="an-carte" id="an-registres"><p class="an-note">Lecture des registres…</p></section>
     `;
   },
 

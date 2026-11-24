@@ -12,7 +12,11 @@ Continuité garde la mémoire d'une histoire pendant qu'on l'écrit :
 
 **Tes textes restent sur ton ordinateur.** L'app n'envoie rien en ligne. Elle fait tourner son propre PHP en local, et celui-ci refuse toute requête qui ne vient pas de sa fenêtre. Les polices et la lecture des PDF sont livrées avec l'app : elle marche sans Internet. Seules les deux polices d'accessibilité (Atkinson Hyperlegible, OpenDyslexic) se téléchargent, et seulement si tu les choisis dans les réglages.
 
-Pensée et designée par Victor Baissait, codée avec Claude.
+**L'IA n'écrit pas à ta place.** Continuité ne génère aucun texte : ni réplique, ni scène, ni résumé. Tout ce qu'elle t'apprend vient de calculs sur ce que tu as écrit (compter, comparer, retrouver, signaler). Les mots et les décisions restent les tiens.
+
+📖 **[Le guide complet](docs/GUIDE.md)** : installation, onglets, partage de projets, sauvegarde automatique, raccourcis.
+
+Pensée et designée par Victor Baissait. Le code de l'app a été écrit avec l'aide de Claude ; l'app elle-même n'utilise aucune IA.
 
 ## Installer
 
@@ -47,7 +51,8 @@ Le même code fonctionne aussi sans Electron, derrière un serveur web avec PHP 
 ## Tester
 
 ```bash
-npm run test:serveur                     # serveur PHP : secret, dossiers interdits, app neuve, rebinding DNS
+npm run test:serveur                     # serveur PHP : secret, dossiers interdits, app neuve, remplacer, fusionner, formats, modèles
+npm run test:sauvegarde && npm run test:mises-a-jour && npm run test:verrou && npm run test:surveillance && npm run test:lecture-reseau
 LEMENU_BASE_URL=http://localhost:8888/lemenu/ node tools/smoke-test.mjs   # bout en bout sur un projet existant
 APP_SELFTEST=/tmp/essai APP_DATA_DIR_DESKTOP=/tmp/donnees APP_USER_DATA_DESKTOP=/tmp/profil npm start
 APP_SINGE=/tmp/singe APP_SINGE_ACTIONS=1000 APP_DATA_DIR_DESKTOP=/tmp/copie APP_USER_DATA_DESKTOP=/tmp/profil npm start

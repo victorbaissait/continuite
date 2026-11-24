@@ -23,6 +23,7 @@
   const q = new URLSearchParams(location.search);
   document.getElementById('message').textContent = q.get('m') || '';
   const champ = document.getElementById('valeur');
+  if (q.get('t') === 'motdepasse') { champ.type = 'password'; champ.autocomplete = 'new-password'; }
   champ.value = q.get('d') || '';
   champ.select();
   document.getElementById('ok').onclick = () => window.invite.repondre(champ.value);

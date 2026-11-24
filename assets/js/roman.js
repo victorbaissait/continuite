@@ -1,13 +1,13 @@
 // assets/js/roman.js — Le type du projet ouvert : série TV, roman, film ou BD, et toute l'app parle avec ses mots
 'use strict';
 
-const ROMAN_VUES_SERIE = [['reprendre', 'Reprendre'], ['persos', 'Personnages'], ['relations', 'Relations'], ['pov', 'Point de vue'], ['rythme', 'Rythme'], ['fins', 'Fins de chapitre'], ['temps', 'Temps du récit'], ['fils', 'Fils entre livres'], ['memoire', 'Mémoire'], ['repetitions', 'Répétitions'], ['plan', 'Plan'], ['objectifs', 'Objectifs'], ['export', 'Exporter'], ['retrouver', 'Retrouver']];
+const ROMAN_VUES_SERIE = [['reprendre', 'Reprendre'], ['persos', 'Personnages'], ['relations', 'Relations'], ['pov', 'Point de vue'], ['rythme', 'Rythme'], ['sens', 'Sens et tics'], ['portraits', 'Portraits'], ['fins', 'Fins de chapitre'], ['temps', 'Temps du récit'], ['fils', 'Fils entre livres'], ['memoire', 'Mémoire'], ['repetitions', 'Répétitions'], ['plan', 'Plan'], ['objectifs', 'Objectifs'], ['annee', 'Ton année'], ['style', 'Feuille de style'], ['export', 'Exporter'], ['retrouver', 'Retrouver']];
 const ROMAN_VUES_UN_LIVRE = ROMAN_VUES_SERIE.map(([k, l]) => [k, k === 'fils' ? 'Fils ouverts' : l]);
 const ROMAN_FORMATS = '.txt,.md,.markdown,.text,.fountain,.pdf,.docx,.docm,.dotx,.odt,.ott,.rtf,.epub,.html,.htm,.xhtml,.zip,.pages,.doc';
 const ROMAN_FORMATS_TEXTE = /\.(txt|md|markdown|text|fountain)$/i;
 const FILM_FORMATS = '.fountain,.fdx,.highland,.fadein,.celtx,.txt,.md,.pdf,.docx,.odt,.rtf,.html,.htm,.wdz,.scw,.mmsw';
-const FILM_VUES_SERIE = [['reprendre', 'Reprendre'], ['persos', 'Personnages'], ['relations', 'Relations'], ['actes', 'Structure'], ['sequences', 'Séquences'], ['parActe', 'Personnages par acte'], ['liege', 'Tableau de liège'], ['travail', 'Plan de travail'], ['tournage', 'Tournage'], ['revisions', 'Révisions'], ['memoire', 'Mémoire'], ['repetitions', 'Répétitions'], ['plan', 'Plan'], ['depouillement', 'Dépouillement'], ['objectifs', 'Objectifs'], ['export', 'Exporter'], ['retrouver', 'Retrouver']];
-const THEATRE_VUES_SERIE = [['reprendre', 'Reprendre'], ['persos', 'Personnages'], ['relations', 'Relations'], ['presence', 'Entrées et sorties'], ['distribution', 'Distribution'], ['parole', 'Temps de parole'], ['didascalies', 'Didascalies'], ['memoire', 'Mémoire'], ['repetitions', 'Répétitions'], ['plan', 'Plan'], ['objectifs', 'Objectifs'], ['export', 'Exporter'], ['retrouver', 'Retrouver']];
+const FILM_VUES_SERIE = [['reprendre', 'Reprendre'], ['persos', 'Personnages'], ['relations', 'Relations'], ['actes', 'Structure'], ['sequences', 'Séquences'], ['lisibilite', 'Lisibilité'], ['parActe', 'Personnages par acte'], ['liege', 'Tableau de liège'], ['travail', 'Plan de travail'], ['tournage', 'Tournage'], ['revisions', 'Révisions'], ['memoire', 'Mémoire'], ['repetitions', 'Répétitions'], ['plan', 'Plan'], ['depouillement', 'Dépouillement'], ['objectifs', 'Objectifs'], ['annee', 'Ton année'], ['style', 'Feuille de style'], ['export', 'Exporter'], ['retrouver', 'Retrouver']];
+const THEATRE_VUES_SERIE = [['reprendre', 'Reprendre'], ['persos', 'Personnages'], ['relations', 'Relations'], ['presence', 'Entrées et sorties'], ['distribution', 'Distribution'], ['parole', 'Temps de parole'], ['didascalies', 'Didascalies'], ['conduite', 'Conduite'], ['memoire', 'Mémoire'], ['repetitions', 'Répétitions'], ['plan', 'Plan'], ['objectifs', 'Objectifs'], ['annee', 'Ton année'], ['style', 'Feuille de style'], ['export', 'Exporter'], ['retrouver', 'Retrouver']];
 const PUB_VUES_SERIE = [['reprendre', 'Reprendre'], ['campagne', 'Campagne'], ['persos', 'Personnages'], ['memoire', 'Mémoire'], ['plan', 'Plan'], ['objectifs', 'Objectifs'], ['export', 'Exporter'], ['retrouver', 'Retrouver']];
 const JEU_VUES_SERIE = [['reprendre', 'Reprendre'], ['carte', 'Carte des lieux'], ['enigmes', 'Énigmes'], ['dialogues', 'Dialogues'], ['inventaire', 'Inventaire'], ['persos', 'Personnages'], ['memoire', 'Mémoire'], ['plan', 'Plan'], ['objectifs', 'Objectifs'], ['export', 'Exporter'], ['retrouver', 'Retrouver']];
 const GENRES_FORMATS = '.txt,.md,.fountain,.pdf,.docx,.odt,.rtf,.html,.htm,.twee,.tw,.tw3,.yarn,.ink,.json';
@@ -60,6 +60,14 @@ const FORMES_TYPE = {
   theatre: [['classique', 'Actes et scènes', 'Une scène par entrée ou sortie'], ['tableaux', 'Tableaux', 'Des tableaux plutôt que des scènes'], ['seul', 'Seul en scène', 'Un seul comédien']],
   pub: [['tv', 'TV et cinéma', 'Spots de 15 à 45 s'], ['radio', 'Radio', 'Le son seul'], ['reseaux', 'Réseaux sociaux', 'Formats courts et verticaux']],
   jeu: [['pnc', 'Point and click', 'Lieux, objets, énigmes'], ['narratif', 'Jeu narratif', 'Dialogues à choix'], ['rpg', 'Jeu de rôle', 'Quêtes et dialogues']],
+};
+
+// Les modèles de départ (api/projets.php modelesProjet) : une structure vide, avec des repères de durée, jamais de texte
+const MODELES_TYPE = {
+  serie: [['sitcom', 'Sitcom 22 min', '1 saison de 10 épisodes, en 3 actes'], ['drame52', 'Série 52 min', '1 saison de 8 épisodes, en 4 actes'], ['mini', 'Mini-série', '6 épisodes, avec leurs repères']],
+  film: [['trois_actes', '3 actes', 'Les actes et leurs pages habituelles'], ['court', 'Court métrage', 'Un seul acte']],
+  roman: [['voyage', 'Voyage du héros', '12 chapitres, une étape chacun'], ['trois_parties', '3 parties', 'Début, milieu, fin']],
+  theatre: [['trois_actes', '3 actes', 'Exposition, nœud, dénouement'], ['un_acte', 'Un acte', 'Une scène pour commencer']],
 };
 
 // Les tournures d'un nom : « de la saison » devient « du livre », « cet épisode » devient « cette planche »

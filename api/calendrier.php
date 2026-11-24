@@ -43,6 +43,17 @@ function nombreFrancais(string $t): ?int {
     return null;
 }
 
+// Les anachronismes : des choses qui n'existaient pas encore à la date de l'épisode (année de première diffusion grand public)
+const CALENDRIER_INVENTIONS = [
+    ['smartphone', '/\bsmartphones?\b/iu', 2007], ['iPhone', '/\biphones?\b/iu', 2007], ['Facebook', '/\bfacebook\b/iu', 2004], ['Twitter', '/\btwitter\b|\btweet(?:s|é|er)?\b/iu', 2006],
+    ['Instagram', '/\binstagram\b/iu', 2010], ['WhatsApp', '/\bwhatsapp\b/iu', 2009], ['TikTok', '/\btik ?tok\b/iu', 2016], ['YouTube', '/\byoutube(?:r|rs|use)?\b/iu', 2005],
+    ['Google', '/\bgoogle\b|\bgoogl(?:er|é)\b/iu', 1998], ['Wikipédia', '/\bwikip[ée]dia\b/iu', 2001], ['le wifi', '/\bwi-?fi\b/iu', 1999], ['Netflix', '/\bnetflix\b/iu', 2007],
+    ['Uber', '/\buber\b/iu', 2009], ['un selfie', '/\bselfies?\b/iu', 2012], ['un emoji', '/\b[ée]mojis?\b/iu', 2010], ['le bitcoin', '/\bbitcoins?\b/iu', 2009],
+    ['une clé USB', '/\bcl[ée]s? usb\b/iu', 2000], ['le Bluetooth', '/\bbluetooth\b/iu', 1999], ['un GPS', '/\bgps\b/iu', 2000], ['un lecteur MP3', '/\bmp3\b/iu', 1998],
+    ['un DVD', '/\bdvds?\b/iu', 1996], ['un SMS', '/\bsms\b|\btexto(?:s)?\b/iu', 1994], ['un e-mail', '/\be-?mails?\b|\bcourriels?\b/iu', 1990], ['un CD', '/\b(?:un|des|le|les|ce) cd\b/iu', 1982],
+    ['l\'euro (pièces et billets)', '/\b\d+[\s\x{00A0}]*(?:euros?|€)/iu', 2002], ['le Covid', '/\bcovid\b|\bconfinement\b/iu', 2020], ['Zoom (visioconférence)', '/\bsur zoom\b|\ben visio\b/iu', 2020],
+];
+
 function calendrierSerie(PDO $db): array {
     $episodes = scenesSecrets($db);
     $alertes = [];
@@ -69,6 +80,13 @@ function calendrierSerie(PDO $db): array {
                     if (preg_match('/dernier|derni[èe]re|prochain|prochaine|pass[ée]|l\'an|l\'ann[ée]e|souvenir|r[êe]v|quand|depuis|jusqu|avant|apr[èe]s|chaque|tous les/u', $apres . ' ' . $avant)) continue;
                     $vus[$fete] = true;
                     $alertes[] = ['type' => 'fete', 'ep' => $e['id'], 'i' => $sc['i'], 'fete' => $fete, 'mois' => CALENDRIER_MOIS[$mois], 'extrait' => extraitSecret($t, mb_strtolower(trim($m[0][0])))];
+                }
+                // 1 bis. Un objet ou un mot qui n'existait pas encore à la date de l'épisode
+                $annee = (int)substr($e['date'], 0, 4);
+                foreach (CALENDRIER_INVENTIONS as [$quoi, $motif, $depuis]) {
+                    if ($annee >= $depuis || isset($vus["anachro:$quoi"]) || !preg_match($motif, $t, $m)) continue;
+                    $vus["anachro:$quoi"] = true;
+                    $alertes[] = ['type' => 'anachronisme', 'ep' => $e['id'], 'i' => $sc['i'], 'quoi' => $quoi, 'depuis' => $depuis, 'annee' => $annee, 'extrait' => extraitSecret($t, mb_strtolower(trim($m[0])))];
                 }
                 // 2. « On est lundi » dans un épisode daté un jeudi
                 if (!isset($vus['jour']) && preg_match('/\b(?:on est|nous sommes|aujourd\'hui(?:,)? (?:c\'est|on est)?)\s*(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/iu', $t, $m)) {

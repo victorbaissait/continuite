@@ -1,5 +1,5 @@
 <?php
-// api/portable.php — Un projet entier dans un seul fichier .lemenu, et son retour sur une autre machine
+// api/portable.php — Un projet entier dans un seul fichier .continuite (les anciens .lemenu s'ouvrent aussi), et son retour sur une autre machine
 // Le fichier est une archive zip : manifeste, base, réglages, puis les dessins, voix, photos et cartes choisis
 
 const PORTABLE_FORMAT = 'lemenu-projet';
@@ -187,7 +187,7 @@ function construirePortable(string $slug, array $garder, string $portee = 'tout'
 
 function nomFichierPortable(string $nom): string {
     $propre = trim((string)preg_replace('/[\\\\\/:*?"<>|\x00-\x1f]+/u', ' ', $nom));
-    return ($propre !== '' ? $propre : 'projet') . '.lemenu';
+    return ($propre !== '' ? $propre : 'projet') . '.continuite';
 }
 
 // Lit une archive reçue sans rien extraire : ce qu'elle contient, et si elle est sûre
@@ -330,7 +330,7 @@ function nettoyerImports(): void {
 }
 
 function handlePortable(string $method, string $action, ?string $slug, array $body, callable $erreur, callable $slugValide): bool {
-    if (!in_array($action, ['portable', 'exporter', 'apercu_import', 'importer'], true)) return false;
+    if (!in_array($action, ['portable', 'exporter', 'apercu_import', 'importer', 'comparer', 'fusionner'], true)) return false;
     if (!class_exists('ZipArchive')) { $erreur('PHP n\'a pas l\'extension zip : le projet portable est indisponible.', 500); return true; }
 
     if ($action === 'portable' || $action === 'exporter') {
@@ -371,6 +371,12 @@ function handlePortable(string $method, string $action, ?string $slug, array $bo
         if (!$copie) { @unlink($chemin); $erreur('Le fichier est vide.'); return true; }
         if ($copie > PORTABLE_MAX) { @unlink($chemin); $erreur('Le fichier dépasse 512 Mo.'); return true; }
         if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $copie) { @unlink($chemin); $erreur('Le fichier n\'est pas arrivé en entier (limite post_max_size de PHP ?).'); return true; }
+        // Une sauvegarde chiffrée ne s'ouvre que par l'app de bureau, qui demande son mot de passe
+        if (file_get_contents($chemin, false, null, 0, 20) === 'CONTINUITE-CHIFFRE-1') {
+            @unlink($chemin);
+            $erreur('Cette sauvegarde est chiffrée : ouvre-la d\'un double-clic ou par Fichier → Ouvrir, l\'app demandera son mot de passe.', 422);
+            return true;
+        }
         try {
             $infos = lirePortable($chemin);
         } catch (RuntimeException $e) {
@@ -380,6 +386,29 @@ function handlePortable(string $method, string $action, ?string $slug, array $bo
         }
         $nomsPris = array_map('nomProjet', slugsProjets());
         echo json_encode($infos + ['jeton' => $jeton, 'taille' => $copie, 'existe' => in_array($infos['nom'], $nomsPris, true)], JSON_UNESCAPED_UNICODE);
+        return true;
+    }
+
+    // Comparer le projet reçu avec un projet d'ici, puis fusionner selon les choix
+    if ($action === 'comparer' || $action === 'fusionner') {
+        if (!$slugValide($slug)) { $erreur('Projet à comparer inconnu.', 404); return true; }
+        try {
+            $la = baseRecue(texteCorps($body['jeton'] ?? ''));
+            $ici = ouvrirBaseProjet($slug);
+            if ($action === 'comparer') {
+                echo json_encode(comparerProjets($ici, $la), JSON_UNESCAPED_UNICODE);
+                return true;
+            }
+            $choix = is_array($body['choix'] ?? null) ? $body['choix'] : [];
+            $bilan = fusionnerProjets($ici, $la, $choix, is_array($body['personnages'] ?? null) ? $body['personnages'] : [], is_array($body['lieux'] ?? null) ? $body['lieux'] : []);
+            $la = null;
+            $jeton = texteCorps($body['jeton']);
+            @unlink(dossierImports() . "/$jeton.lemenu");
+            @unlink(dossierImports() . "/$jeton.base.db");
+            echo json_encode($bilan + ['ok' => true], JSON_UNESCAPED_UNICODE);
+        } catch (RuntimeException $e) {
+            $erreur($e->getMessage(), 422);
+        }
         return true;
     }
 

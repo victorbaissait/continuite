@@ -114,6 +114,7 @@ function donneesTheatre(PDO $db): array {
         if ($lu['debut']) $etat = array_fill_keys($lu['debut'], true);
         $presents = $etat;
         $parle = [];
+        $tirade = [];
         $entrees = $sorties = [];
         $sansEntree = [];
         $motsDid = 0;
@@ -123,6 +124,7 @@ function donneesTheatre(PDO $db): array {
                 $etat[$qui] = true;
                 $presents[$qui] = true;
                 $parle[$qui] = ($parle[$qui] ?? 0) + motsGenre($t);
+                $tirade[$qui] = max($tirade[$qui] ?? 0, motsGenre($t));
                 continue;
             }
             $motsDid += motsGenre($t);
@@ -135,7 +137,7 @@ function donneesTheatre(PDO $db): array {
             'id' => (int)$r['id'], 'n' => (int)$r['numero_episode'], 'titre' => (string)$r['titre'],
             'presents' => array_keys($presents), 'parle' => $parle, 'muets' => array_values(array_diff(array_keys($presents), array_keys($parle))),
             'entrees' => array_values(array_unique($entrees)), 'sorties' => array_values(array_unique($sorties)),
-            'sans_entree' => array_keys($sansEntree), 'mots' => array_sum($parle), 'mots_did' => $motsDid,
+            'sans_entree' => array_keys($sansEntree), 'mots' => array_sum($parle), 'mots_did' => $motsDid, 'tirade' => (object)$tirade,
         ];
     }
     return ['noms' => $noms, 'actes' => array_map(fn($a, $n) => ['n' => $n, 'scenes' => $a], $actes, array_keys($actes))];

@@ -19,7 +19,7 @@ $chemin = rawurldecode((string)parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL
 if ($chemin === '/__sante') { header('Content-Type: text/plain'); echo 'ok'; return true; }
 
 // Seuls l'interface et l'API se servent : jamais les données, les outils ni les fichiers cachés
-$autorise = $chemin === '/' || $chemin === '/index.html' || $chemin === '/journal.css'
+$autorise = $chemin === '/' || $chemin === '/index.html' || $chemin === '/journal.css' || $chemin === '/docs/GUIDE.md'
     || str_starts_with($chemin, '/assets/') || $chemin === '/api/index.php';
 if (!$autorise || str_contains($chemin, '..') || preg_match('#/\.#', $chemin)) {
     http_response_code(404);

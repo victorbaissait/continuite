@@ -2,7 +2,7 @@
   "name": "continuite",
   "productName": "Continuité",
   "dossierDonnees": "Continuite",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Atelier d'écriture local pour séries, films, romans, BD, théâtre, pub et jeux : personnages, secrets, continuité. Les données restent sur l'ordinateur.",
   "private": true,
   "main": "electron/main.js",
@@ -17,7 +17,12 @@
     "dist:mac": "electron-builder --mac --arm64 --x64",
     "dist:win": "electron-builder --win --x64",
     "dist:linux": "electron-builder --linux --x64",
-    "test:serveur": "node electron/test-serveur.js"
+    "test:serveur": "node electron/test-serveur.js",
+    "test:sauvegarde": "node electron/test-sauvegarde.js",
+    "test:mises-a-jour": "node electron/test-mises-a-jour.js",
+    "test:verrou": "node electron/test-verrou.js",
+    "test:surveillance": "node electron/test-surveillance.js",
+    "test:lecture-reseau": "node electron/test-lecture-reseau.js"
   },
   "devDependencies": {
     "electron": "^44.5.1",
@@ -36,10 +41,16 @@
       "package.json",
       "electron/main.js",
       "electron/php-server.js",
+      "electron/sauvegarde.js",
+      "electron/updates.js",
       "electron/preload.js",
       "electron/prompt-preload.js",
       "electron/prompt.html",
-      "electron/loading.html"
+      "electron/loading.html",
+      "electron/verrou.js",
+      "electron/surveillance.js",
+      "electron/lecture-reseau.js",
+      "electron/verrou.html"
     ],
     "extraResources": [
       {
@@ -48,6 +59,7 @@
         "filter": [
           "index.html",
           "router.php",
+          "docs/GUIDE.md",
           "api/**/*",
           "assets/**/*",
           "!**/.DS_Store"
@@ -111,6 +123,22 @@
       },
       "icon": "electron/build/icon-carre.png"
     },
-    "publish": null
+    "publish": null,
+    "fileAssociations": [
+      {
+        "ext": "continuite",
+        "name": "Projet Continuité",
+        "description": "Projet Continuité",
+        "role": "Editor",
+        "mimeType": "application/x-continuite"
+      },
+      {
+        "ext": "lemenu",
+        "name": "Projet Continuité (ancien format)",
+        "description": "Projet Continuité",
+        "role": "Editor",
+        "mimeType": "application/x-continuite"
+      }
+    ]
   }
 }

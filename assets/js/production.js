@@ -6,8 +6,16 @@ const MISE_EN_PAGE = {
   papier: 'A4', mentions: 'fr', numeros: true, revision: true, suite: true, titre: true, auteur: '', contact: '', version: '',
   police_roman: 'Times New Roman', taille_roman: 12, interligne: 2, signes: 1500, alinea: true, chapitre_page: true, entete_roman: true,
   hmc: 60, decalage: 15, debut_jour: '08:00', debut_nuit: '19:00', premier_jour: '', repos: [0],
-  liege_couleur: 'intrigue',
+  liege_couleur: 'intrigue', filigrane: '', filigrane_lecteur: false,
 };
+// Un filigrane en travers de chaque page imprimée (« Confidentiel », le nom du lecteur…) : du texte seul, échappé
+function htmlFiligrane(texte) {
+  const t = String(texte || '').trim().slice(0, 80);
+  if (!t) return '';
+  return `<style>.filigrane { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 10; }
+    .filigrane span { transform: rotate(-32deg); font: 700 46pt/1.2 Helvetica, Arial, sans-serif; color: rgba(0, 0, 0, .09); text-transform: uppercase; letter-spacing: .08em; text-align: center; max-width: 80%; }
+    @media screen { .filigrane span { color: rgba(127, 127, 127, .14); } }</style><div class="filigrane" aria-hidden="true"><span>${esc(t)}</span></div>`;
+}
 // Une note en JSON qui doit être un objet : abîmée, vide ou « null », elle compte comme vide
 function objetNote(brut) {
   try {
@@ -155,6 +163,9 @@ const MiseEnPage = {
         ${champ('version', 'Version', 'text', 'placeholder="Première version, 3 novembre 2026"')}
       </div>
       ${champ('contact', 'Contact', 'text', 'placeholder="Agent, courriel, téléphone"')}` : ''}
+      <p class="an-label">Filigrane</p>
+      ${champ('filigrane', 'Texte en travers de chaque page', 'text', 'maxlength="80" placeholder="Confidentiel"')}
+      ${coche('filigrane_lecteur', 'Au nom du lecteur dans les envois', 'onglet Lecteurs : « Confidentiel · Paul » sur son PDF et sa version de lecture')}
       ${Roman.film ? `
       <p class="an-label">Tournage</p>
       <div class="mep-grille">
@@ -263,7 +274,152 @@ const Export = {
           <div class="exp-apercu">${Roman.actif ? this._pageRoman(r) : this._pageScenario(d.pages[this.page] || [], this.page, r)}</div>
         </section>
       </div>
+      ${this._htmlAutres()}
     `;
+  },
+
+  // ─── Deux autres documents : le PDF à annoter (relecture sur papier) et le dossier de présentation ───
+
+  _htmlAutres() {
+    return `<section class="an-carte">
+      <h2 class="an-titre">Autres documents</h2>
+      <div class="an-ligne">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Export.pdfAnnoter()">PDF à annoter</button>
+        <span class="an-note">Grande marge à droite, lignes numérotées, interligne double : pour relire au stylo.</span>
+      </div>
+      ${(Ecriture.d?.parleurs || []).length ? `<div class="an-ligne">
+        <select id="exp-role" aria-label="Rôle">${Ecriture.d.parleurs.slice(0, 80).map(p => `<option value="${esc(p.n)}">${esc(p.n)}</option>`).join('')}</select>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Export.pdfRole(document.getElementById('exp-role').value)">PDF du rôle</button>
+        <span class="an-note">Pour une lecture publique : tout le texte, avec les répliques de ce rôle surlignées, et le nombre de ses répliques.</span>
+      </div>` : ''}
+      <div class="an-ligne">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Export.dossier()">Dossier de présentation</button>
+        <span class="an-note">Une page pour un producteur ou un éditeur : le titre, le résumé, les personnages principaux et les chiffres du projet.</span>
+      </div>
+    </section>`;
+  },
+
+  async pdfAnnoter() {
+    const ids = this._ids() ? this._ids().split(',').map(Number) : Ecriture.ensemble().map(e => e.id);
+    if (!ids.length) { toast('Rien à imprimer.', 'info'); return; }
+    toast('Préparation du PDF…', 'info');
+    const sections = [];
+    for (const id of ids.slice(0, 120)) {
+      const ep = await api.get(`episodes/${id}`);
+      const texte = String(Ecriture.notes?.[`brouillon:${id}`] || ep.texte_episode || '');
+      if (!texte.trim()) continue;
+      const e = Ecriture.ordre[Ecriture.rang.get(id)];
+      const titre = `${e ? Ecriture._code(e) : ''}${ep.titre ? ` — ${ep.titre}` : ''}`;
+      sections.push(`<section><h1>${esc(titre)}</h1>${texte.split('\n').map(l => (l.trim() ? `<p class="l">${esc(l)}</p>` : '<p class="vide"></p>')).join('')}</section>`);
+    }
+    if (!sections.length) { toast('Ces épisodes n\'ont pas encore de texte.', 'info'); return; }
+    const r = MiseEnPage.lire();
+    const fenetre = window.open('', '_blank');
+    if (!fenetre) { toast('Autorise les fenêtres pour exporter en PDF', 'error'); return; }
+    fenetre.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${esc(Projets.actuel()?.nom || 'Relecture')} – à annoter</title><style>
+      @page { size: A4; margin: 1.8cm 6cm 1.8cm 1.2cm; }
+      body { font: 11pt/2 'Courier New', Courier, monospace; color: #000; counter-reset: l; }
+      section + section { break-before: page; }
+      h1 { font-size: 12pt; margin: 0 0 1em; }
+      p { margin: 0; white-space: pre-wrap; position: relative; padding-left: 1.4cm; }
+      p.l { counter-increment: l; }
+      /* Les numéros dans une colonne du texte : dans la marge de la page, ils seraient coupés à l'impression */
+      p.l::before { content: counter(l); position: absolute; left: 0; width: 1cm; text-align: right; font-size: 8pt; color: #888; }
+      h1 { padding-left: 1.4cm; }
+      p.vide { height: 1em; }
+    </style></head><body>${htmlFiligrane(r.filigrane)}${sections.join('')}<script>window.onload = () => setTimeout(() => print(), 300)<\/script></body></html>`);
+    fenetre.document.close();
+  },
+
+  // Le script d'un comédien : tout le texte, ses répliques surlignées (le nom au-dessus et la réplique)
+  async pdfRole(nom) {
+    if (!nom) return;
+    const ids = this._ids() ? this._ids().split(',').map(Number) : Ecriture.ensemble().map(e => e.id);
+    toast('Préparation du PDF…', 'info');
+    const cle = t => String(t).trim().replace(/\s*\(.*\)$/, '').toUpperCase();
+    let total = 0;
+    const sections = [];
+    for (const id of ids.slice(0, 120)) {
+      const ep = await api.get(`episodes/${id}`);
+      const texte = String(Ecriture.notes?.[`brouillon:${id}`] || ep.texte_episode || '');
+      if (!texte.trim()) continue;
+      let sien = false, n = 0;
+      const lignes = Ecriture.classerLignes(texte).filter(l => l.type !== 'note').map(l => {
+        if (l.type === 'perso') { sien = cle(l.ligne) === cle(nom); if (sien) n++; }
+        else if (l.type === 'vide' || l.type === 'scene') sien = false;
+        return `<p class="${esc(l.type)}${sien && l.type !== 'vide' ? ' sien' : ''}">${esc(l.ligne.trim()) || '&nbsp;'}</p>`;
+      });
+      if (!n) continue;
+      total += n;
+      const e = Ecriture.ordre[Ecriture.rang.get(id)];
+      sections.push(`<section><h1>${esc(e ? Ecriture._code(e) : '')}${ep.titre ? ` — ${esc(ep.titre)}` : ''} <small>${n} réplique(s)</small></h1>${lignes.join('')}</section>`);
+    }
+    if (!sections.length) { toast(`${nom} ne parle dans aucun de ces épisodes.`, 'info'); return; }
+    const r = MiseEnPage.lire();
+    const fenetre = window.open('', '_blank');
+    if (!fenetre) { toast('Autorise les fenêtres pour exporter en PDF', 'error'); return; }
+    fenetre.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${esc(nom)} – rôle</title><style>
+      @page { size: A4; margin: 2cm; }
+      body { font: 11pt/1.35 'Courier New', Courier, monospace; color: #000; }
+      .couverture { font: 700 20pt Helvetica, Arial, sans-serif; margin-bottom: .2em; }
+      .compte { font: 11pt Helvetica, Arial, sans-serif; color: #444; margin-bottom: 2em; }
+      section + section { break-before: page; }
+      h1 { font-size: 12pt; } h1 small { font-weight: 400; color: #666; }
+      p { margin: 0; white-space: pre-wrap; }
+      .scene { font-weight: 700; margin-top: 1em; } .perso { margin-left: 5cm; margin-top: .6em; } .dialogue { margin: 0 2cm 0 3cm; } .parenthese { margin-left: 4cm; }
+      .sien { background: #fff0a0; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    </style></head><body>${htmlFiligrane(r.filigrane)}<div class="couverture">${esc(nom)}</div><div class="compte">${total} réplique(s) · ${esc(Projets.actuel()?.nom || '')}</div>${sections.join('')}<script>window.onload = () => setTimeout(() => print(), 300)<\/script></body></html>`);
+    fenetre.document.close();
+  },
+
+  // Le dossier de présentation : les champs se remplissent une fois, puis la page s'imprime
+  dossier() {
+    const d = objetNote(Ecriture.notes?.presentation);
+    const champ = (cle, label, long) => `<label class="mep-champ"><span class="an-label">${label}</span>${long ? `<textarea id="pres-${cle}" rows="4">${esc(d[cle] || '')}</textarea>` : `<input id="pres-${cle}" type="text" value="${esc(d[cle] || '')}">`}</label>`;
+    modal.open(`<div class="modal-title">Dossier de présentation</div>
+      <p class="an-note">Ce que tu écris ici reste dans le projet. Les personnages principaux, leurs photos de casting et les chiffres viennent de l'app.</p>
+      ${champ('accroche', 'L\'idée en une phrase')}${champ('resume', 'Résumé', true)}${champ('ton', 'Genre et ton')}${champ('auteur', 'Auteur')}${champ('contact', 'Contact')}
+      <div class="an-ligne"><button type="button" class="btn btn-primary btn-sm" onclick="Export.imprimerDossier()">Créer le PDF</button></div>`);
+  },
+
+  async imprimerDossier() {
+    const d = {};
+    for (const k of ['accroche', 'resume', 'ton', 'auteur', 'contact']) d[k] = (document.getElementById(`pres-${k}`)?.value || '').trim().slice(0, 3000);
+    await Ecriture.note('presentation', JSON.stringify(d));
+    modal.close();
+    const [persos, photos, episodes] = await Promise.all([DataStore.get('personnages'), api.get('analyse_notes&cle=photos-persos').catch(() => null), DataStore.get('episodes')]);
+    const images = objetNote(photos?.valeur);
+    const principaux = (Array.isArray(persos) ? persos : []).filter(p => Number(p.est_principal) === 2).slice(0, 6);
+    const ecrits = (Array.isArray(episodes) ? episodes : []).filter(e => e.has_texte);
+    const saisons = new Set((episodes || []).map(e => e.saison_numero)).size;
+    const p = Projets.actuel() || {};
+    const photo = id => (/^data:image\/(jpeg|png|webp);base64,/.test(images[id] || '') ? `<img src="${images[id]}" alt="">` : '');
+    const r = MiseEnPage.lire();
+    const fenetre = window.open('', '_blank');
+    if (!fenetre) { toast('Autorise les fenêtres pour exporter en PDF', 'error'); return; }
+    fenetre.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${esc(p.nom || 'Projet')} – dossier</title><style>
+      @page { size: A4; margin: 1.8cm; }
+      body { font: 10.5pt/1.5 Georgia, serif; color: #111; }
+      h1 { font: 700 26pt/1.1 Helvetica, Arial, sans-serif; margin: 0; }
+      .sous { color: #555; margin: .3em 0 1.2em; font-family: Helvetica, Arial, sans-serif; }
+      .accroche { font-size: 14pt; font-style: italic; margin: 0 0 1em; }
+      h2 { font: 700 10pt Helvetica, Arial, sans-serif; text-transform: uppercase; letter-spacing: .08em; color: #555; margin: 1.4em 0 .5em; border-bottom: 1px solid #ccc; padding-bottom: 3px; }
+      .persos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 18px; }
+      .perso { display: flex; gap: 10px; }
+      .perso img { width: 56px; height: 56px; object-fit: cover; border-radius: 50%; }
+      .perso b { display: block; }
+      .chiffres { display: flex; gap: 28px; font-family: Helvetica, Arial, sans-serif; }
+      .chiffres b { display: block; font-size: 16pt; }
+      .pied { margin-top: 2em; font-size: 9pt; color: #555; }
+    </style></head><body>${htmlFiligrane(r.filigrane)}
+      <h1>${esc(p.nom || '')}</h1><p class="sous">${esc({ serie: 'Série', roman: 'Roman', film: 'Long métrage', bd: 'Bande dessinée', theatre: 'Pièce de théâtre', pub: 'Campagne', jeu: 'Jeu vidéo' }[p.type] || '')}${d.ton ? ` · ${esc(d.ton)}` : ''}${d.auteur ? ` · ${esc(d.auteur)}` : ''}</p>
+      ${d.accroche ? `<p class="accroche">${esc(d.accroche)}</p>` : ''}
+      ${d.resume ? `<h2>Résumé</h2>${d.resume.split(/\n+/).map(x => `<p>${esc(x)}</p>`).join('')}` : ''}
+      ${principaux.length ? `<h2>Personnages</h2><div class="persos">${principaux.map(x => `<div class="perso">${photo(x.id)}<div><b>${esc([x.prenom, x.nom].filter(Boolean).join(' '))}</b>${esc(String(x.profession || '').slice(0, 80))}<br>${esc(String(x.caracteristiques || '').split('\n')[0].slice(0, 220))}</div></div>`).join('')}</div>` : ''}
+      <h2>En chiffres</h2><div class="chiffres">${saisons > 1 || p.type === 'serie' ? `<div><b>${saisons}</b>${esc(Roman.haut?.p || 'saisons')}</div>` : ''}<div><b>${(episodes || []).length}</b>${esc(Roman.unite?.p || 'épisodes')}</div><div><b>${ecrits.length}</b>déjà écrits</div></div>
+      ${d.contact ? `<p class="pied">${esc(d.contact)}</p>` : ''}
+      <script>window.onload = () => setTimeout(() => print(), 300)<\/script></body></html>`);
+    fenetre.document.close();
   },
 
   voir(sens) {
@@ -416,7 +572,7 @@ const Export = {
       ${EXPORT_CSS}
       .exp-page { box-shadow: none; margin: 0; break-after: page; }
       .exp-flux p { margin: 0; text-align: justify; }
-    </style></head><body>${titre}${corps}<script>window.onload = () => setTimeout(() => print(), 400)<\/script></body></html>`);
+    </style></head><body>${htmlFiligrane(r.filigrane)}${titre}${corps}<script>window.onload = () => setTimeout(() => print(), 400)<\/script></body></html>`);
     fenetre.document.close();
   },
 };

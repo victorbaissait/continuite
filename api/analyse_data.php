@@ -12,6 +12,14 @@ function ensureAnalyseNotes(PDO $db): void {
 
 function handleAnalyseNotes(PDO $db, string $method, array $body): void {
     if ($method === 'GET') {
+        // Une seule note, sans charger toutes les autres (les brouillons peuvent être lourds)
+        if (isset($_GET['cle']) && is_string($_GET['cle'])) {
+            $st = $db->prepare('SELECT valeur FROM analyse_notes WHERE cle = ?');
+            $st->execute([mb_substr($_GET['cle'], 0, 200)]);
+            $v = $st->fetchColumn();
+            echo json_encode(['cle' => $_GET['cle'], 'valeur' => $v === false ? null : $v]);
+            return;
+        }
         $notes = [];
         foreach ($db->query('SELECT cle, valeur FROM analyse_notes')->fetchAll() as $row) $notes[$row['cle']] = $row['valeur'];
         echo json_encode((object)$notes);

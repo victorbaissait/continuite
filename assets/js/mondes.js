@@ -11,7 +11,7 @@ const octetsLisibles = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1).replace(
 
 const PORTABLE_MOTS = { dessins: ['dessin', 'dessins'], photos: ['photo', 'photos'], voix: ['voix', 'voix'], cartes: ['carte', 'cartes'] };
 
-// ─── Projet portable : un seul fichier .lemenu pour tout emporter ───────────
+// ─── Projet portable : un seul fichier .continuite pour tout emporter ───────────
 
 const Portable = {
   tailles: null,
@@ -78,7 +78,7 @@ const Portable = {
             ${ligne('photos', 'Photos du casting et fiches dessinées')}
             ${ligne('voix', 'Voix enregistrées')}
             ${ligne('cartes', 'Cartes et mondes inventés')}
-            <div class="pt-total"><span>Un seul fichier</span><strong>${esc(nomActuel)}${this.portee === 'tout' ? '' : this.portee === 'bible' ? ' - bible' : ` - S${esc(this.portee.slice(1))}`}.lemenu · ${this.portee === 'tout' ? octetsLisibles(this._total()) : 'plus léger que le projet entier'}</strong></div>
+            <div class="pt-total"><span>Un seul fichier</span><strong>${esc(nomActuel)}${this.portee === 'tout' ? '' : this.portee === 'bible' ? ' - bible' : ` - S${esc(this.portee.slice(1))}`}.continuite · ${this.portee === 'tout' ? octetsLisibles(this._total()) : 'plus léger que le projet entier'}</strong></div>
             <a class="btn btn-primary btn-sm" href="${esc(this._lienExport())}" download>⬇ Exporter le projet</a>
             <p class="an-note">Laisse les dessins ou les voix à la maison pour un envoi plus léger : les textes restent complets.</p>
           ` : '<p class="an-note">Impossible de mesurer le projet pour l\'instant.</p>'}
@@ -86,8 +86,8 @@ const Portable = {
         <section class="pt-bloc" aria-labelledby="pt-imp-titre">
           <h3 id="pt-imp-titre" class="an-label">Importer un projet</h3>
           <label class="pt-depot" ondragover="event.preventDefault(); this.classList.add('survol')" ondragleave="this.classList.remove('survol')" ondrop="event.preventDefault(); this.classList.remove('survol'); Portable.recevoir(event.dataTransfer.files[0])">
-            <input type="file" accept=".lemenu,application/zip" onchange="Portable.recevoir(this.files[0]); this.value = ''">
-            <span>${this.envoi ? 'Lecture du fichier…' : 'Dépose un fichier .lemenu ici, ou clique pour le choisir'}</span>
+            <input type="file" accept=".continuite,.lemenu,application/zip" onchange="Portable.recevoir(this.files[0]); this.value = ''">
+            <span>${this.envoi ? 'Lecture du fichier…' : 'Dépose un fichier .continuite ici, ou clique pour le choisir'}</span>
           </label>
           ${r ? `
             <div class="pt-apercu">
@@ -99,16 +99,17 @@ const Portable = {
             <div class="an-ligne" role="group" aria-label="Mode d'import">
               <button type="button" class="an-choix ${this.mode === 'nouveau' ? 'actif' : ''}" aria-pressed="${this.mode === 'nouveau'}" onclick="Portable.choisirMode('nouveau')">Nouveau projet</button>
               <button type="button" class="an-choix ${this.mode === 'remplacer' ? 'actif' : ''}" aria-pressed="${this.mode === 'remplacer'}" onclick="Portable.choisirMode('remplacer')">Remplacer « ${esc(nomActuel)} »</button>
+              <button type="button" class="an-choix ${this.mode === 'fusionner' ? 'actif' : ''}" aria-pressed="${this.mode === 'fusionner'}" onclick="Portable.choisirMode('fusionner')">Comparer et fusionner</button>
             </div>
-            ${this.mode === 'nouveau' ? `
+            ${this.mode === 'fusionner' ? this._rendreFusion(nomActuel) : this.mode === 'nouveau' ? `
               <label class="an-label" for="pt-nom">Nom du nouveau projet</label>
               <input id="pt-nom" type="text" maxlength="80" value="${esc(this.nom)}" oninput="Portable.nom = this.value">
               <p class="an-note">${r.existe ? `Un projet s'appelle déjà « ${esc(r.nom)} » : celui-ci s'ajoute à côté, rien n'est touché.` : 'Il s\'ajoute à côté de tes projets.'}</p>
             ` : `<p class="an-note pt-attention">« ${esc(nomActuel)} » sera remplacé par le fichier. L'ancienne version part dans la corbeille des projets : tu peux la restaurer.</p>`}
-            <div class="an-ligne">
+            ${this.mode === 'fusionner' ? '' : `<div class="an-ligne">
               <button type="button" class="btn btn-primary btn-sm" ${this.envoi ? 'disabled' : ''} onclick="Portable.importer()">${this.mode === 'nouveau' ? 'Importer comme nouveau projet' : `Remplacer « ${esc(nomActuel)} »`}</button>
               <button type="button" class="btn btn-ghost btn-sm" onclick="Portable.annuler()">Annuler</button>
-            </div>
+            </div>`}
           ` : ''}
         </section>
       </div>`;
@@ -117,10 +118,90 @@ const Portable = {
   choisirMode(m) {
     this.mode = m;
     this.rendre();
+    if (m === 'fusionner') this.comparer();
+  },
+
+  // ─── Comparer et fusionner : épisode par épisode, garder le sien ou prendre celui du fichier ───
+
+  comparaison: null,
+  choixFusion: {},
+  ajoutsFusion: { personnages: new Set(), lieux: new Set() },
+
+  async comparer() {
+    if (!this.recu) return;
+    this.comparaison = 'chargement';
+    this.rendre();
+    const r = await api.post('projets/comparer', { jeton: this.recu.jeton, slug: PROJET }).catch(() => ({ error: 'Le serveur ne répond pas.' }));
+    if (r.error) { toast(r.error, 'error'); this.comparaison = null; this.mode = 'nouveau'; this.rendre(); return; }
+    this.comparaison = r;
+    // Par défaut : on garde ce qui est ici, on ajoute ce qui n'existe que dans le fichier
+    this.choixFusion = Object.fromEntries(r.episodes.filter(e => e.etat === 'la' || e.etat === 'different').map(e => [e.cle, e.etat === 'la' ? 'la' : 'ici']));
+    this.ajoutsFusion = { personnages: new Set(r.personnages), lieux: new Set(r.lieux) };
+    this.rendre();
+  },
+
+  choisirFusion(cle, v) {
+    this.choixFusion[cle] = v;
+    this.rendre();
+  },
+
+  basculerAjout(groupe, nom, oui) {
+    if (oui) this.ajoutsFusion[groupe].add(nom); else this.ajoutsFusion[groupe].delete(nom);
+  },
+
+  _rendreFusion(nomActuel) {
+    const c = this.comparaison;
+    if (!c) return '';
+    if (c === 'chargement') return '<p class="an-note">Comparaison des deux projets…</p>';
+    const code = e => `S${e.saison}E${String(e.numero).padStart(2, '0')}`;
+    const utiles = c.episodes.filter(e => e.etat !== 'identique');
+    const identiques = c.episodes.length - utiles.length;
+    const pris = Object.values(this.choixFusion).filter(v => v === 'la').length;
+    const choix = (e, v, label) => `<label class="interface-case"><input type="radio" name="fu-${esc(e.cle)}" ${this.choixFusion[e.cle] === v ? 'checked' : ''} onchange="Portable.choisirFusion('${esc(e.cle)}', '${v}')"> ${label}</label>`;
+    const ajouts = (groupe, titre) => c[groupe].length ? `<h4 class="an-label">${titre} seulement dans le fichier</h4><div class="fu-ajouts">${c[groupe].map(n => `<label class="interface-case"><input type="checkbox" ${this.ajoutsFusion[groupe].has(n) ? 'checked' : ''} onchange="Portable.basculerAjout('${groupe}', ${esc(JSON.stringify(n))}, this.checked)"> ${esc(n)}</label>`).join('')}</div>` : '';
+    return `
+      <p class="an-note">${identiques} épisode(s) identique(s). Pour les autres, choisis la version à garder. Ce que tu remplaces part d'abord dans les Versions de l'épisode.</p>
+      ${utiles.length ? `<div class="an-table"><table class="fu-table">
+        <thead><tr><th>Épisode</th><th>Différence</th><th>Garder</th></tr></thead>
+        <tbody>${utiles.map(e => `<tr>
+          <td><strong>${esc(code(e))}</strong><br><span class="an-note">${esc(e.titre_ici || e.titre_la || 'Sans titre')}</span></td>
+          <td>${e.etat === 'ici' ? 'Seulement ici' : e.etat === 'la' ? `Seulement dans le fichier${e.mots_la ? ` · ${e.mots_la} mots` : ''}`
+            : `${esc(e.champs.join(', '))}${e.script ? `<br><span class="an-note">Script : ${e.mots_ici} → ${e.mots_la} mots · +${e.script.ajoutees} / −${e.script.retirees} lignes${e.script.exemple ? ` · « ${esc(e.script.exemple)} »` : ''}</span>` : ''}`}</td>
+          <td>${e.etat === 'ici' ? '<span class="an-note">reste tel quel</span>'
+            : e.etat === 'la' ? `${choix(e, 'la', 'Ajouter')}${choix(e, 'ici', 'Ignorer')}`
+            : `${choix(e, 'ici', `Le mien`)}${choix(e, 'la', 'Celui du fichier')}`}</td>
+        </tr>`).join('')}</tbody></table></div>` : '<p class="an-note">Les épisodes sont identiques.</p>'}
+      ${ajouts('personnages', 'Personnages')}
+      ${ajouts('lieux', 'Lieux')}
+      <div class="an-ligne">
+        <button type="button" class="btn btn-primary btn-sm" ${this.envoi ? 'disabled' : ''} onclick="Portable.fusionner()">Fusionner dans « ${esc(nomActuel)} » (${pris} épisode(s))</button>
+        <button type="button" class="btn btn-ghost btn-sm" onclick="Portable.annuler()">Annuler</button>
+      </div>`;
+  },
+
+  async fusionner() {
+    const c = this.comparaison;
+    if (!c || !this.recu) return;
+    const pris = Object.values(this.choixFusion).filter(v => v === 'la').length;
+    if (!pris && !this.ajoutsFusion.personnages.size && !this.ajoutsFusion.lieux.size) { toast('Rien à fusionner : tout est gardé tel quel.', 'info'); return; }
+    if (!confirm(`Prendre ${pris} épisode(s) du fichier, et ajouter ${this.ajoutsFusion.personnages.size} personnage(s) et ${this.ajoutsFusion.lieux.size} lieu(x) ? Les textes remplacés restent dans les Versions.`)) return;
+    this.envoi = true;
+    this.rendre();
+    if (typeof Ecriture !== 'undefined') await Ecriture.viderNotes?.();
+    const r = await api.post('projets/fusionner', { jeton: this.recu.jeton, slug: PROJET, choix: this.choixFusion,
+      personnages: [...this.ajoutsFusion.personnages], lieux: [...this.ajoutsFusion.lieux] }).catch(() => ({ error: 'Le serveur ne répond pas.' }));
+    this.envoi = false;
+    if (r.error) { toast(r.error, 'error'); this.rendre(); return; }
+    toast(`Fusion faite : ${r.remplaces} épisode(s) remplacé(s), ${r.ajoutes} ajouté(s), ${r.personnages} personnage(s), ${r.lieux} lieu(x).`);
+    this.recu = null;
+    this.comparaison = null;
+    this.mode = 'nouveau';
+    location.reload();
   },
 
   annuler() {
     this.recu = null;
+    this.comparaison = null;
     this.rendre();
   },
 

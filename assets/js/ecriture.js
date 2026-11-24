@@ -1,8 +1,16 @@
 // assets/js/ecriture.js — Aide à l'écriture : la série entière ou un épisode à écrire
 'use strict';
 
+// Les familles de vues d'Écriture : où ranger chaque vue, pour que la barre ne devienne pas un fourre-tout
+const VUE_FAMILLES = [
+  ['Écrire', ['reprendre', 'preparer', 'sequencier', 'liege', 'brouillon', 'plan', 'objectifs', 'annee', 'campagne', 'spot']],
+  ['L\'histoire', ['persos', 'relations', 'arcs', 'continuite', 'memoire', 'fils', 'pov', 'temps', 'actes', 'sequences', 'parActe', 'planches', 'decoupage', 'cheminfer', 'presence', 'distribution', 'carte', 'enigmes', 'dialogues', 'inventaire', 'structure']],
+  ['Relire', ['arevoir', 'repetitions', 'lecture', 'versions', 'gags', 'rythme', 'fins', 'sens', 'portraits', 'bulles', 'tourne', 'parole', 'didascalies', 'accroches', 'lisibilite', 'style', 'retrouver']],
+  ['Produire', ['depouillement', 'storyboard', 'production', 'travail', 'tournage', 'revisions', 'budget', 'conduite', 'export']],
+];
+
 const ECRITURE_VUES = {
-  serie: [['reprendre', 'Reprendre'], ['persos', 'Personnages'], ['relations', 'Relations'], ['memoire', 'Mémoire'], ['repetitions', 'Répétitions'], ['plan', 'Plan'], ['depouillement', 'Dépouillement'], ['objectifs', 'Objectifs'], ['export', 'Exporter'], ['retrouver', 'Retrouver']],
+  serie: [['reprendre', 'Reprendre'], ['persos', 'Personnages'], ['relations', 'Relations'], ['memoire', 'Mémoire'], ['arevoir', 'À revoir'], ['repetitions', 'Répétitions'], ['plan', 'Plan'], ['depouillement', 'Dépouillement'], ['objectifs', 'Objectifs'], ['annee', 'Ton année'], ['accroches', 'Ouvertures et fins'], ['lisibilite', 'Lisibilité'], ['style', 'Feuille de style'], ['export', 'Exporter'], ['retrouver', 'Retrouver']],
   get saison() { return this.serie; },
   get selection() { return this.serie; },
   episode: [['preparer', 'Préparer'], ['sequencier', 'Séquencier'], ['liege', 'Tableau de liège'], ['brouillon', 'Brouillon'], ['lecture', 'Lecture à la table'], ['versions', 'Versions'], ['structure', 'Structure'], ['gags', 'Gags par page'], ['memoire', 'Mémoire'], ['retrouver', 'Retrouver']],
@@ -166,6 +174,100 @@ const Ecriture = {
   agir(el) {
     const { a, v } = el.dataset;
     this[a](v);
+  },
+
+  // Ouvre directement le brouillon d'un épisode, à la ligne d'un commentaire si on la donne (« id » ou « id:ligne »)
+  ouvrirBrouillon(valeur) {
+    const [id, ligne] = String(valeur).split(':');
+    this.epId = Number(id);
+    this.portee = 'episode';
+    this.vue = 'brouillon';
+    this.rendre();
+    if (ligne !== undefined && Number(ligne) >= 0) setTimeout(() => this._defiler?.(Number(ligne)), 300);
+  },
+
+  // ─── À revoir : tous les commentaires laissés dans les brouillons de la série, en une liste ───
+
+  _tousCommentaires() {
+    const ids = new Set(this.ensemble().map(e => e.id));
+    return this.ordre.filter(e => ids.has(e.id)).flatMap(e => {
+      let liste = [];
+      try { liste = JSON.parse(this.notes[`commentaires:${e.id}`] || '[]'); } catch (x) { liste = []; }
+      const lignes = String(this.notes[`brouillon:${e.id}`] || '').split('\n');
+      return (Array.isArray(liste) ? liste : []).map((c, rang) => {
+        // Le commentaire suit sa ligne par son contenu, comme dans le brouillon
+        const places = lignes.map((l, i) => (l.trim() === c.a ? i : -1)).filter(i => i >= 0).sort((a, b) => Math.abs(a - c.n) - Math.abs(b - c.n));
+        return { e, rang, t: String(c.t || ''), a: String(c.a || ''), ligne: places.length ? places[0] : -1 };
+      });
+    });
+  },
+
+  // ─── Le projet en un coup d'œil (sous « Reprendre ») : fils ouverts, commentaires, sauvegarde, lecteurs ───
+
+  _htmlAccueil() {
+    if (!this._accueil || Date.now() - this._accueilLu > 60000) this._chargerAccueil();
+    const a = this._accueil;
+    if (!a) return '';
+    const jour = d => new Date(d).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' });
+    const jours = d => Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+    const revoir = this._tousCommentaires().length;
+    const stat = (l, v, action = '', orange = false, titre = '') => `<div class="ec-rep-stat"${titre ? ` title="${esc(titre)}"` : ''}><span class="an-note">${action ? this._lien(l, 'aller', action) : l}</span><strong ${orange ? 'class="ec-orange"' : ''}>${v}</strong></div>`;
+    const sauvegarde = a.sauvegarde === undefined ? '' : a.sauvegarde
+      ? stat('Dernière sauvegarde', esc(jour(a.sauvegarde)), '', jours(a.sauvegarde) > 7, 'Config → App de bureau')
+      : stat('Dernière sauvegarde', 'jamais', '', true, 'Config → App de bureau : choisis un dossier de sauvegarde');
+    return `<div class="ec-rep-stats" aria-label="Le projet en un coup d'œil">
+        ${stat('Fils ouverts', Analyse._fr(a.fils), '', false, 'Promesses narratives encore ouvertes (Thèmes)')}
+        ${stat('Commentaires à revoir', Analyse._fr(revoir), 'arevoir', revoir > 0)}
+        ${sauvegarde}
+        ${stat('Dernier envoi aux lecteurs', a.envoi ? `${esc(jour(a.envoi.date))} <small>${esc(a.envoi.nom)}</small>` : 'aucun', '', false, 'Onglet Lecteurs')}
+      </div>`;
+  },
+
+  async _chargerAccueil() {
+    this._accueilLu = Date.now();
+    const [promesses, lecteurs, sauvegarde] = await Promise.all([
+      api.get('promesses').catch(() => []),
+      api.get('lecteurs').catch(() => []),
+      window.bureau?.sauvegarde ? window.bureau.sauvegarde('lire').catch(() => null) : Promise.resolve(undefined),
+    ]);
+    const envois = (Array.isArray(lecteurs) ? lecteurs : []).filter(l => l.dernier_envoi).sort((x, y) => String(y.dernier_envoi).localeCompare(String(x.dernier_envoi)));
+    this._accueil = {
+      fils: (Array.isArray(promesses) ? promesses : []).filter(p => p.statut === 'ouverte').length,
+      envoi: envois[0] ? { date: envois[0].dernier_envoi, nom: envois[0].nom } : null,
+      sauvegarde: sauvegarde === undefined ? undefined : (sauvegarde && sauvegarde.resultat && sauvegarde.resultat.ok ? sauvegarde.resultat.date : (sauvegarde && sauvegarde.derniere) || null),
+    };
+    if (this.vue === 'reprendre' && this.d && document.getElementById('ec-barre')) this.rendreVue();
+  },
+
+  vueARevoir() {
+    const tous = this._tousCommentaires();
+    const q = this._plat(this.revoirQ || '');
+    const liste = q ? tous.filter(c => this._plat(`${c.t} ${c.a} ${this._code(c.e)} ${c.e.t}`).includes(q)) : tous;
+    const episodes = [...new Set(liste.map(c => c.e))];
+    return `
+      <div class="an-ligne">
+        <input id="ec-revoir-q" class="an-recherche" type="text" aria-label="Chercher dans les commentaires" placeholder="Chercher dans les commentaires…" value="${esc(this.revoirQ || '')}" oninput="Ecriture.regler('revoirQ', this.value, 'ec-revoir-q')">
+        <span class="an-note">${tous.length} commentaire(s) à revoir dans ${new Set(tous.map(c => c.e.id)).size} épisode(s). On les laisse dans le brouillon (bouton « Sur cette ligne ») ; « Fait » les retire.</span>
+      </div>
+      ${episodes.length ? episodes.map(e => `
+        <section class="an-carte">
+          <div class="an-entete"><h2 class="an-titre">${esc(this._code(e))} — ${esc(e.t || 'Sans titre')}</h2>${this._lien('Ouvrir le brouillon', 'ouvrirBrouillon', e.id)}</div>
+          <ul class="ec-liste ec-revoir">${liste.filter(c => c.e === e).map(c => `<li>
+            <span><strong>${esc(c.t)}</strong>${c.a ? `<br><span class="an-note vo-brut">${c.ligne < 0 ? '(ligne disparue) ' : `ligne ${c.ligne + 1} · `}${esc(c.a.slice(0, 140))}</span>` : ''}</span>
+            <span class="ec-mem-actions">${this._lien('Aller à la ligne', 'ouvrirBrouillon', `${e.id}:${c.ligne}`)}${this._lien('Fait', 'commentaireFait', `${e.id}:${c.rang}`)}</span>
+          </li>`).join('')}</ul>
+        </section>`).join('') : `<section class="an-carte"><p class="an-note">${tous.length ? 'Aucun commentaire ne correspond.' : 'Rien à revoir : aucun commentaire dans les brouillons de cette sélection. Dans un brouillon, place le curseur sur une ligne et ajoute un commentaire « À revoir ».'}</p></section>`}
+    `;
+  },
+
+  async commentaireFait(valeur) {
+    const [id, rang] = String(valeur).split(':').map(Number);
+    let liste = [];
+    try { liste = JSON.parse(this.notes[`commentaires:${id}`] || '[]'); } catch (x) { liste = []; }
+    if (!liste[rang]) return;
+    liste.splice(rang, 1);
+    await this.note(`commentaires:${id}`, liste.length ? JSON.stringify(liste) : '');
+    this.rendreVue();
   },
 
   ouvrirEpisode(id) {
@@ -540,8 +642,13 @@ const Ecriture = {
       return;
     }
     if (!visibles.some(([k]) => k === this.vue)) this.vue = visibles[0][0];
-    nav.innerHTML = visibles.map(([k, l]) => `<button type="button" class="an-vue-btn ${k === this.vue ? 'actif' : ''}" onclick="Ecriture.aller('${k}')">${esc(l)}</button>`).join('');
-    const vues = { reprendre: 'vueReprendre', persos: 'vuePersos', relations: 'vueRelations', memoire: 'vueMemoire', repetitions: 'vueRepetitions', retrouver: 'vueRetrouver', preparer: 'vuePreparer', brouillon: 'vueBrouillon', structure: 'vueStructure', plan: 'vuePlan', objectifs: 'vueObjectifs', sequencier: 'vueSequencier', gags: 'vueGags', depouillement: 'vueDepouillement', pov: 'vueRoman', rythme: 'vueRoman', fins: 'vueRoman', temps: 'vueRoman', fils: 'vueRoman', actes: 'vueFilm', sequences: 'vueFilm', parActe: 'vueFilm', planches: 'vueBD', bulles: 'vueBD', tourne: 'vueBD', decoupage: 'vueBD', cheminfer: 'vueBD', storyboard: 'vueStoryboard', production: 'vueProduction', travail: 'vueFilm', revisions: 'vueFilm', export: 'vueExport', liege: 'vueLiege', tournage: 'vueTournage', presence: 'vueGenre', distribution: 'vueGenre', parole: 'vueGenre', didascalies: 'vueGenre', campagne: 'vueGenre', spot: 'vueGenre', carte: 'vueGenre', enigmes: 'vueGenre', dialogues: 'vueGenre', inventaire: 'vueGenre', lecture: 'vueAtelier', versions: 'vueAtelier', arcs: 'vueAtelier', continuite: 'vueAtelier', budget: 'vueAtelier' };
+    // Les vues rangées par familles (ton ordre est gardé à l'intérieur de chacune) : la barre reste lisible
+    const familles = VUE_FAMILLES.map(([nom, cles]) => [nom, visibles.filter(([k]) => cles.includes(k))]);
+    const rangees = new Set(familles.flatMap(([, l]) => l.map(([k]) => k)));
+    const autres = visibles.filter(([k]) => !rangees.has(k));
+    if (autres.length) familles[familles.length - 1][1].push(...autres);
+    nav.innerHTML = familles.filter(([, l]) => l.length).map(([nom, l]) => `<span class="ec-famille" role="group" aria-label="${esc(nom)}"><span class="ec-famille-nom" aria-hidden="true">${esc(nom)}</span>${l.map(([k, lib]) => `<button type="button" class="an-vue-btn ${k === this.vue ? 'actif' : ''}" onclick="Ecriture.aller('${k}')">${esc(lib)}</button>`).join('')}</span>`).join('');
+    const vues = { reprendre: 'vueReprendre', persos: 'vuePersos', relations: 'vueRelations', memoire: 'vueMemoire', arevoir: 'vueARevoir', repetitions: 'vueRepetitions', retrouver: 'vueRetrouver', preparer: 'vuePreparer', brouillon: 'vueBrouillon', structure: 'vueStructure', plan: 'vuePlan', objectifs: 'vueObjectifs', sequencier: 'vueSequencier', gags: 'vueGags', depouillement: 'vueDepouillement', pov: 'vueRoman', rythme: 'vueRoman', fins: 'vueRoman', temps: 'vueRoman', fils: 'vueRoman', actes: 'vueFilm', sequences: 'vueFilm', parActe: 'vueFilm', planches: 'vueBD', bulles: 'vueBD', tourne: 'vueBD', decoupage: 'vueBD', cheminfer: 'vueBD', storyboard: 'vueStoryboard', production: 'vueProduction', travail: 'vueFilm', revisions: 'vueFilm', export: 'vueExport', style: 'vueStyle', annee: 'vueAnnee', sens: 'vueSens', lisibilite: 'vueLisibilite', portraits: 'vuePortraits', conduite: 'vueConduite', accroches: 'vueAccroches', liege: 'vueLiege', tournage: 'vueTournage', presence: 'vueGenre', distribution: 'vueGenre', parole: 'vueGenre', didascalies: 'vueGenre', campagne: 'vueGenre', spot: 'vueGenre', carte: 'vueGenre', enigmes: 'vueGenre', dialogues: 'vueGenre', inventaire: 'vueGenre', lecture: 'vueAtelier', versions: 'vueAtelier', arcs: 'vueAtelier', continuite: 'vueAtelier', budget: 'vueAtelier' };
     racine.innerHTML = this[vues[this.vue]]();
     if (this.vue === 'persos') this._chargerRepliques();
     if (this.vue === 'relations') this._chargerEchanges();
@@ -553,10 +660,19 @@ const Ecriture = {
     if (this.vue === 'gags') this._chargerGags();
     if (this.vue === 'depouillement') this._chargerDepouillement();
     if (['pov', 'rythme', 'fins', 'temps', 'fils'].includes(this.vue)) this._chargerRoman();
+    if (this.vue === 'rythme') this._chargerTension();
     if (['actes', 'sequences', 'parActe', 'travail', 'revisions'].includes(this.vue)) this._chargerFilm();
     if (['planches', 'bulles', 'tourne', 'decoupage', 'cheminfer'].includes(this.vue)) this._chargerBD();
     if (this.vue === 'production') this._chargerProduction();
     if (this.vue === 'export') Export.ouvrir();
+    if (this.vue === 'style') FeuilleStyle.ouvrir();
+    if (this.vue === 'annee') this._chargerAnnee();
+    if (this.vue === 'sens') this._chargerSens();
+    if (this.vue === 'lisibilite') this._chargerLisibilite();
+    if (this.vue === 'portraits') this._chargerPortraits();
+    if (this.vue === 'conduite') this._chargerConduite();
+    if (this.vue === 'accroches') this._chargerAccroches();
+    if (this.vue === 'memoire') this._chargerObjets();
     if (this.vue === 'liege') Liege.ouvrir();
     if (this.vue === 'tournage') Tournage.ouvrir();
     if (['presence', 'distribution', 'parole', 'didascalies', 'campagne', 'spot', 'carte', 'enigmes', 'dialogues', 'inventaire'].includes(this.vue)) Genres.ouvrir();
@@ -701,6 +817,7 @@ const Ecriture = {
         ${stat('Mots par épisode', Analyse._fr(m.mots))}
         ${stat('Scripts à vérifier', copies, 'repetitions', copies > 0)}
       </div>
+      ${this._htmlAccueil()}
       <section class="an-carte ec-rep-suite">
         <p class="an-label">Ensuite</p>
         ${ensuite.map(x => `<div>${this._lien(esc(this._code(x)), 'ouvrirEpisode', x.id)} ${esc(x.t || 'Sans titre')}</div>`).join('') || '<div class="an-note">Plus aucun épisode à écrire ici.</div>'}
@@ -1118,7 +1235,8 @@ const Ecriture = {
   noterPlusTard(cle, valeur) {
     this.notes[cle] = valeur;
     clearTimeout(this._notesAttente[cle]);
-    this._notesAttente[cle] = setTimeout(() => this.note(cle, valeur), 700);
+    // Une fois envoyée, la note n'attend plus : rien ne sera renvoyé plus tard par-dessus une autre fenêtre
+    this._notesAttente[cle] = setTimeout(() => { delete this._notesAttente[cle]; this.note(cle, valeur); }, 700);
   },
 
   async viderNotes() {
@@ -1223,14 +1341,15 @@ const Ecriture = {
         <button type="button" class="btn btn-secondary btn-sm" onclick="Ecriture.ouvrirVersions()">Versions</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Ecriture.basculerRecherche()">Remplacer</button>
         <button type="button" class="btn btn-secondary btn-sm" onclick="Ecriture.basculerFocus()">Concentration</button>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="Ecriture.lireBrouillonAloud()">▶ Lire</button>
-        <button type="button" class="btn btn-ghost btn-sm" onclick="Ecriture.arreterLecture()">Arrêter</button>
+        ${window.bureau ? '<button type="button" class="btn btn-secondary btn-sm" title="Ouvre ce brouillon dans une deuxième fenêtre, pour relire ou comparer" onclick="window.bureau.fenetre({ episode: Ecriture.epId })">Autre fenêtre</button>' : ''}
+        <button type="button" class="btn btn-secondary btn-sm" title="Le brouillon qui défile en grand, pour lire à voix haute ou enregistrer" onclick="Prompteur.depuisTexte(document.getElementById('ec-brouillon')?.value || '', Ecriture._titreEp())">Prompteur</button>
+        ${'speechSynthesis' in window ? '<button type="button" class="btn btn-secondary btn-sm ec-ecouter-btn" title="Lit à voix haute la sélection, ou depuis le curseur, une voix par personnage" onclick="Ecriture.ecouter()">▶ Écouter</button>' : ''}
         <select id="ec-export" aria-label="Exporter" onchange="Ecriture.exporter(this.value)"><option value="">Exporter…</option><option value="pdf">PDF au format scénario</option><option value="fountain">Fountain</option><option value="fdx">Final Draft</option></select>
       </div>
       <p class="an-note">Le brouillon reste à part tant que tu ne le valides pas. Sélectionne un mot pour retrouver où il a déjà été dit.</p>
       <div class="ec-brouillon">
         <div class="ec-atelier" id="ec-atelier">
-          <div class="ec-focus-tete"><span class="an-note" id="ec-focus-info"></span><button type="button" class="btn btn-ghost btn-sm" onclick="Ecriture.basculerFocus()">Sortir</button></div>
+          <div class="ec-focus-tete"><span class="an-note" id="ec-focus-info"></span><span><button type="button" class="btn btn-ghost btn-sm" id="ec-sprint" title="25 minutes d'écriture chronométrées ; cliquer de nouveau arrête" onclick="Sprint.basculer()">${Sprint.libelle()}</button><button type="button" class="btn btn-ghost btn-sm" id="ec-ambiance" title="Un bruit de fond pour se concentrer, fabriqué par l'ordinateur" onclick="Ambiance.suivante()">${Ambiance.libelle()}</button>${'speechSynthesis' in window ? '<button type="button" class="btn btn-ghost btn-sm ec-ecouter-btn" title="Lit à voix haute depuis le curseur" onclick="Ecriture.ecouter()">▶ Écouter</button>' : ''}<button type="button" class="btn btn-ghost btn-sm" onclick="Ecriture.basculerFocus()">Sortir</button></span></div>
           <div class="ec-rech" id="ec-rech" hidden>
             <input id="ec-rech-q" type="text" aria-label="Chercher dans le brouillon" placeholder="Chercher…" value="${esc(this.rechQ)}" oninput="Ecriture.setRecherche('rechQ', this.value)">
             <input id="ec-rech-r" type="text" aria-label="Remplacer par" placeholder="Remplacer par…" value="${esc(this.rechR)}" oninput="Ecriture.rechR = this.value">
@@ -1250,6 +1369,7 @@ const Ecriture = {
         <div class="ec-colonne">
           <div id="ec-scenes" class="ec-bilan"></div>
           <div id="ec-comms" class="ec-bilan"></div>
+          <div id="ec-contraintes" class="ec-bilan"></div>
           <div id="ec-bilan" class="ec-bilan"></div>
           <div id="ec-fiche" class="ec-bilan" hidden></div>
           <div id="ec-memoire" class="ec-bilan"><p class="an-note">Sélectionne un mot dans le brouillon.</p></div>
@@ -1569,7 +1689,13 @@ const Ecriture = {
     const toutes = this._lignesMemoire().filter(l => termes.every(t => this._plat(`${l.plat} ${l.info}`).includes(t)));
     const nombre = t => toutes.filter(l => l.type === t).length;
     const liste = this.memFiltre === 'tout' ? toutes : toutes.filter(l => l.type === this.memFiltre);
-    const onglets = [['tout', 'Tout', toutes.length], ['fil', 'Fils', nombre('fil')], ['fait', 'Faits', nombre('fait')], ['gag', 'Gags', nombre('gag')], ['verifier', 'À vérifier', nombre('verifier')]];
+    const onglets = [['tout', 'Tout', toutes.length], ['fil', 'Fils', nombre('fil')], ['fait', 'Faits', nombre('fait')], ['gag', 'Gags', nombre('gag')], ['verifier', 'À vérifier', nombre('verifier')],
+      ['objets', 'Objets oubliés', this._objets ? this._objetsVisibles().length : '…']];
+    // Les objets oubliés : leur propre liste, à la place du tableau
+    if (this.memFiltre === 'objets') {
+      return `<div class="an-ligne"><div class="ec-portee" role="group" aria-label="Filtrer">${onglets.map(([k, l, n]) => Analyse._bouton(`${l} (${n})`, this.memFiltre === k, `Ecriture.regler('memFiltre', '${k}')`)).join('')}</div></div>
+        <section class="an-carte" id="ec-objets"><p class="an-note">Recherche des objets oubliés…</p></section>`;
+    }
     const e = this.ordre[this.rang.get(this.epId)];
     const brouillon = this.notes[`brouillon:${this.epId}`] || '';
     const plat = this._plat(brouillon);
@@ -1618,6 +1744,39 @@ const Ecriture = {
         </aside>
       </div>
     `;
+  },
+
+  _objetsVisibles() {
+    let ignores = [];
+    try { ignores = JSON.parse(this.notes['objets-ignores'] || '[]'); } catch (e) { ignores = []; }
+    return (this._objets?.objets || []).filter(o => !ignores.includes(o.mot));
+  },
+
+  // ─── Les fusils de Tchekhov : un objet mis en avant dans une didascalie, qui ne revient jamais ensuite ───
+
+  async _chargerObjets() {
+    const avant = this._objets;
+    if (!this._objets || Date.now() - this._objetsLu > 60000) { this._objets = await api.get('objets_oublies').catch(() => null); this._objetsLu = Date.now(); }
+    // Le nombre s'affiche sur le bouton dès que la liste est lue
+    if (!avant && this._objets && this.vue === 'memoire') { this.rendreVue(); return; }
+    this._rendreObjets();
+  },
+
+  _ignorerObjet(mot) {
+    let ignores = [];
+    try { ignores = JSON.parse(this.notes['objets-ignores'] || '[]'); } catch (e) { ignores = []; }
+    this.note('objets-ignores', JSON.stringify([...new Set([...ignores, mot])].slice(-500)));
+    this._rendreObjets();
+  },
+
+  _rendreObjets() {
+    const slot = document.getElementById('ec-objets');
+    const d = this._objets;
+    if (!slot || !d) return;
+    const liste = this._objetsVisibles();
+    slot.innerHTML = `<div class="an-entete"><h2 class="an-titre">Objets jamais revenus</h2><span class="an-note">${liste.length} objet(s)</span></div>
+      <p class="an-note">Le fusil de Tchekhov : un objet qu'on montre doit servir plus tard. Voici les objets mis en avant dans une didascalie (écrits en capitales, ou nommés plusieurs fois dans l'épisode) que la suite de la série ne mentionne plus jamais. Parfois c'est voulu : « ignorer » le retire de la liste. Une faute de frappe y apparaît aussi, puisqu'elle ne revient jamais.</p>
+      ${liste.length ? `<ul class="ec-liste">${liste.map(o => `<li><span><strong>${esc(o.mot)}</strong> · ${this._lien(esc(o.code), 'ouvrirEpisode', o.ep)}${o.recent ? ' <span class="an-note">(épisode récent : la suite peut encore venir)</span>' : ''}<br><span class="an-note vo-brut">${esc(o.ligne)}</span></span><button type="button" class="ec-lien" onclick="Ecriture._ignorerObjet(this.dataset.mot)" data-mot="${esc(o.mot)}">ignorer</button></li>`).join('')}</ul>` : '<p class="an-note">Aucun objet oublié : tout ce qui est montré revient.</p>'}`;
   },
 
   _majTypeMemoire(type) {
@@ -1681,6 +1840,12 @@ const Ecriture = {
     const seances = this._seances();
     seances[this._jour()] = (seances[this._jour()] || 0) + gain;
     this.noterPlusTard('seances', JSON.stringify(seances));
+    // L'heure aussi, pour le bilan de l'année (« ton heure préférée »)
+    let heures = {};
+    try { heures = JSON.parse(this.notes['seances-heures'] || '{}') || {}; } catch (e) { heures = {}; }
+    const h = `${new Date().getFullYear()}:${new Date().getHours()}`;
+    heures[h] = (heures[h] || 0) + gain;
+    this.noterPlusTard('seances-heures', JSON.stringify(heures));
   },
 
   _bilanObjectifs() {
@@ -1717,7 +1882,48 @@ const Ecriture = {
         <div class="ec-barres" role="img" aria-label="Mots écrits sur les 14 derniers jours">${quatorze.map(j => `<div class="ec-barre-col" title="${j} : ${Analyse._fr(seances[j] || 0)} mots"><span style="height:${Math.round(((seances[j] || 0) * 100) / max)}%"></span></div>`).join('')}</div>
         <div class="ec-barres-axe"><span class="an-note">${quatorze[0].slice(5)}</span><span class="an-note">aujourd'hui</span></div>
       </section>
+      ${this._htmlCourbeLongue(seances)}
+      ${this._htmlSprints()}
     `;
+  },
+
+  _htmlSprints() {
+    let l = [];
+    try { l = JSON.parse(this.notes.sprints || '[]'); } catch (e) { l = []; }
+    if (!Array.isArray(l) || !l.length) return '<section class="an-carte"><h2 class="an-titre">Sprints</h2><p class="an-note">En mode concentration, ⏱ Sprint lance 25 minutes chronométrées : les sprints faits s\'afficheront ici.</p></section>';
+    const moy = Math.round(l.reduce((t, x) => t + x.mots, 0) / l.length);
+    const record = l.reduce((m, x) => (x.mots > m.mots ? x : m), l[0]);
+    return `<section class="an-carte"><div class="an-entete"><h2 class="an-titre">Sprints</h2><span class="an-note">${l.length} sprint(s) · ${moy} mots en moyenne · record ${record.mots} mots</span></div>
+      <ul class="ec-liste">${l.slice(-8).reverse().map(x => `<li><span>${esc(new Date(x.date).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }))}</span><span>${x.mots} mots en ${x.minutes} min</span></li>`).join('')}</ul></section>`;
+  },
+
+  // Les mots par semaine sur six mois, et le total de chaque mois : le rythme dans la durée
+  _htmlCourbeLongue(seances) {
+    const jours = Object.keys(seances).filter(j => /^\d{4}-\d{2}-\d{2}$/.test(j)).sort();
+    if (!jours.length) return '';
+    const lundi = d => { const x = new Date(`${d}T12:00:00`); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.toISOString().slice(0, 10); };
+    const semaines = Array.from({ length: 26 }, (_, i) => lundi(this._jour((25 - i) * 7)));
+    const parSemaine = Object.fromEntries(semaines.map(s => [s, 0]));
+    const parMois = {};
+    for (const j of jours) {
+      const n = Number(seances[j]) || 0;
+      const s = lundi(j);
+      if (s in parSemaine) parSemaine[s] += n;
+      parMois[j.slice(0, 7)] = (parMois[j.slice(0, 7)] || 0) + n;
+    }
+    const valeurs = semaines.map(s => parSemaine[s]);
+    const max = Math.max(1, ...valeurs);
+    const actives = valeurs.filter(v => v > 0);
+    const moyenne = actives.length ? Math.round(actives.reduce((a, b) => a + b, 0) / actives.length) : 0;
+    const mois = Object.keys(parMois).sort().slice(-12);
+    const nomMois = m => new Date(`${m}-15T12:00:00`).toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' });
+    const court = d => new Date(`${d}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    return `<section class="an-carte">
+        <div class="an-entete"><h2 class="an-titre">Mots écrits par semaine, sur six mois</h2><span class="an-note">${actives.length} semaine(s) d'écriture · ${Analyse._fr(moyenne)} mots en moyenne quand tu écris</span></div>
+        <div class="ec-barres" role="img" aria-label="Mots écrits par semaine sur les 26 dernières semaines">${semaines.map((s, i) => `<div class="ec-barre-col" title="Semaine du ${court(s)} : ${Analyse._fr(valeurs[i])} mots"><span style="height:${Math.round((valeurs[i] * 100) / max)}%"></span></div>`).join('')}</div>
+        <div class="ec-barres-axe"><span class="an-note">${court(semaines[0])}</span><span class="an-note">cette semaine</span></div>
+        ${mois.length > 1 ? `<table class="an-table ec-mois"><caption class="an-note">Par mois</caption><tbody><tr>${mois.map(m => `<th scope="col">${esc(nomMois(m))}</th>`).join('')}</tr><tr>${mois.map(m => `<td>${Analyse._fr(parMois[m])}</td>`).join('')}</tr></tbody></table>` : ''}
+      </section>`;
   },
 
   vueObjectifs() {
@@ -1840,6 +2046,7 @@ const Ecriture = {
         <h2 class="an-titre">Qui parle</h2>
         <p class="an-note">${repliques ? `${(repliques - inconnues).toLocaleString('fr-FR')} répliques sur ${repliques.toLocaleString('fr-FR')} attribuées à un personnage (${Math.round(100 * (repliques - inconnues) / repliques)} %). Les autres sont comptées sous « Inconnu » : une incise comme « dit Marie » ou une fiche personnage avec son genre aide à les reconnaître.` : 'Aucun dialogue repéré.'}</p>
       </section>
+      <section class="an-carte" id="ec-tension"><p class="an-note">Calcul de la tension…</p></section>
     `;
   },
 
@@ -2127,7 +2334,46 @@ const Ecriture = {
         }).join('')}</div>
         <p class="an-note">Chaque rectangle est une case ; plus il est clair, plus la case porte de mots. Bord orange : plus de ${max} cases ou plus de ${max * 25} mots pour une planche ${BD_FORMATS_NOMS[Roman.format]}.</p>
       </section>
+      ${this._tempsLecture(planches)}
     `;
+  },
+
+  // Le temps de lecture d'une planche : un regard par case, et les mots des bulles (environ 3,3 mots par seconde)
+  _tempsLecture(planches) {
+    if (!planches.length) return '';
+    const temps = p => Math.round(p.cases.length * 1.5 + p.mots / 3.3);
+    const liste = planches.map(p => ({ p, s: temps(p) }));
+    const total = liste.reduce((t, x) => t + x.s, 0);
+    const moy = total / liste.length;
+    const lentes = liste.filter(x => x.s > moy * 1.8);
+    const vives = liste.filter(x => x.s < moy * 0.4);
+    const max = Math.max(...liste.map(x => x.s), 1);
+    const duree = s => (s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s` : `${s} s`);
+    return `<section class="an-carte">
+      <div class="an-entete"><h2 class="an-titre">Temps de lecture</h2><span class="an-note">environ ${duree(total)} pour tout lire · ${duree(Math.round(moy))} par planche en moyenne</span></div>
+      <p class="an-note">Un regard par case (1,5 s) et les mots des bulles. Une planche bien plus lente que les autres freine la lecture ; une planche très rapide fait respirer, ou passe trop vite sur un moment fort.</p>
+      <div class="dens-barres" role="img" aria-label="Temps de lecture de chaque planche">${liste.map(x => `<span style="height:${Math.max(4, Math.round(x.s * 100 / max))}%" class="${x.s > moy * 1.8 ? 'dense' : ''}" title="${esc(this._code(x.p.e))} : ${duree(x.s)}"></span>`).join('')}</div>
+      ${lentes.length ? `<p class="ec-orange">Lentes : ${lentes.map(x => `${esc(this._code(x.p.e))} (${duree(x.s)})`).join(', ')}</p>` : ''}
+      ${vives.length ? `<p class="an-note">Très rapides : ${vives.map(x => `${esc(this._code(x.p.e))} (${duree(x.s)})`).join(', ')}</p>` : ''}
+    </section>
+    `;
+  },
+
+  // Les bruitages : combien, lesquels reviennent, et leur variété
+  _bruitages(planches) {
+    const sons = planches.flatMap(p => p.cases.flatMap(c => c.bulles.filter(b => b[3] === 'son').map(b => ({ p, t: String(b[1]).trim() }))));
+    if (!sons.length) return `<section class="an-carte"><h2 class="an-titre">Bruitages</h2><p class="an-note">Aucun bruitage : dans une case, une ligne « SFX : BANG » (ou SON :, BRUIT :) en ajoute un.</p></section>`;
+    const norme = t => t.toUpperCase().replace(/[!?.…\s]+/g, '').replace(/(.)\1{2,}/g, '$1$1');
+    const compte = {};
+    sons.forEach(x => { const k = norme(x.t); compte[k] = compte[k] || { t: x.t, n: 0 }; compte[k].n++; });
+    const liste = Object.values(compte).sort((a, b) => b.n - a.n);
+    const variete = Math.round((liste.length * 100) / sons.length);
+    const avecSons = new Set(sons.map(x => x.p));
+    return `<section class="an-carte">
+      <div class="an-entete"><h2 class="an-titre">Bruitages</h2><span class="an-note">${sons.length} bruitage(s) · ${liste.length} différent(s) · sur ${avecSons.size} planche(s)</span></div>
+      <p class="an-note">Variété : ${variete} %. ${variete < 50 ? 'Les mêmes bruitages reviennent souvent : un « BAM » unique marque plus qu\'un dixième.' : 'Les bruitages sont variés.'}</p>
+      <ul class="ec-liste">${liste.slice(0, 20).map(x => `<li class="${x.n >= 4 ? 'ec-orange' : ''}"><span class="vo-brut">${esc(x.t)}</span><span>${x.n} fois</span></li>`).join('')}</ul>
+    </section>`;
   },
 
   _vueBulles(planches) {
@@ -2142,6 +2388,7 @@ const Ecriture = {
         ${longues.length ? `<ul class="ec-liste">${longues.slice(0, 60).map(b => `<li><span>${this._lien(`${esc(this._code(b.p.e))} · case ${b.c.n}`, 'ouvrirStoryboard', b.p.e.id)} <strong>${esc(b.qui)}</strong> <span class="vo-brut">${esc(b.texte.length > 140 ? `${b.texte.slice(0, 140)}…` : b.texte)}</span></span><span class="${b.mots > limite * 1.4 ? 'ec-orange' : ''}">${b.mots} mots</span></li>`).join('')}</ul>` : `<p class="an-note">Aucune bulle au-delà de ${limite} mots.</p>`}
         <p class="an-note">Au-delà de ${limite} mots, une bulle mange la case pour une BD ${BD_FORMATS_NOMS[Roman.format]}. Coupe-la, ou étale-la sur deux cases. Les récitatifs comptent aussi.</p>
       </section>
+      ${this._bruitages(planches)}
     `;
   },
 
@@ -2483,6 +2730,248 @@ const Ecriture = {
     this.rendre();
   },
 
+  // ─── Ton année d'écriture : un bilan, comme une rétrospective ───
+
+  vueAnnee() {
+    return '<div class="an-vue" id="ec-annee"><p class="an-note">Le bilan se prépare…</p></div>';
+  },
+
+  async _chargerAnnee(annee) {
+    this.anneeChoisie = annee || this.anneeChoisie || new Date().getFullYear();
+    const d = await api.get(`annee_ecriture&annee=${this.anneeChoisie}`);
+    this._annee = d;
+    this._rendreAnnee();
+  },
+
+  _rendreAnnee() {
+    const slot = document.getElementById('ec-annee');
+    const d = this._annee;
+    if (!slot || !d) return;
+    const a = String(d.annee);
+    const seances = this._seances();
+    const jours = Object.keys(seances).filter(j => j.startsWith(a) && Number(seances[j]) > 0).sort();
+    const mots = jours.reduce((t, j) => t + Number(seances[j]), 0);
+    const avant = Object.keys(seances).filter(j => j.startsWith(String(d.annee - 1))).reduce((t, j) => t + Number(seances[j] || 0), 0);
+    const meilleur = jours.reduce((m, j) => (!m || seances[j] > seances[m] ? j : m), null);
+    let serie = 0, record = 0, prec = null;
+    for (const j of jours) {
+      const suite = prec && (new Date(`${j}T12:00:00`) - new Date(`${prec}T12:00:00`)) / 86400000 === 1;
+      serie = suite ? serie + 1 : 1;
+      record = Math.max(record, serie);
+      prec = j;
+    }
+    const parJourSemaine = [0, 0, 0, 0, 0, 0, 0];
+    const parMois = {};
+    jours.forEach(j => { const d0 = new Date(`${j}T12:00:00`); parJourSemaine[d0.getDay()] += Number(seances[j]); parMois[j.slice(5, 7)] = (parMois[j.slice(5, 7)] || 0) + Number(seances[j]); });
+    const nomsJours = ['le dimanche', 'le lundi', 'le mardi', 'le mercredi', 'le jeudi', 'le vendredi', 'le samedi'];
+    const jourFavori = mots ? nomsJours[parJourSemaine.indexOf(Math.max(...parJourSemaine))] : null;
+    const moisFavori = Object.entries(parMois).sort((x, y) => y[1] - x[1])[0];
+    let heures = {};
+    try { heures = JSON.parse(this.notes['seances-heures'] || '{}') || {}; } catch (e) { heures = {}; }
+    const parHeure = Object.entries(heures).filter(([k]) => k.startsWith(`${a}:`)).sort((x, y) => y[1] - x[1])[0];
+    const heure = parHeure ? Number(parHeure[0].split(':')[1]) : null;
+    const moment = heure === null ? null : heure < 6 ? 'la nuit' : heure < 12 ? 'le matin' : heure < 14 ? 'à midi' : heure < 18 ? 'l\'après-midi' : heure < 22 ? 'le soir' : 'tard le soir';
+    const date = j => new Date(`${j}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+    const nomMois = m => new Date(`${a}-${m}-15T12:00:00`).toLocaleDateString('fr-FR', { month: 'long' });
+    const annees = [...new Set([String(new Date().getFullYear()), ...d.annees, ...Object.keys(seances).map(j => j.slice(0, 4))])].sort().reverse();
+    const carte = (grand, petit) => `<div class="annee-carte"><strong>${grand}</strong><span>${petit}</span></div>`;
+    slot.innerHTML = `
+      <div class="an-ligne"><label class="an-label" for="ec-annee-choix">Année</label>
+        <select id="ec-annee-choix" onchange="Ecriture._chargerAnnee(Number(this.value))">${annees.map(x => `<option ${x === a ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select>
+        <span class="an-note">Tout vient de ce que tu as écrit dans le Brouillon, des Versions gardées et des envois aux lecteurs.</span></div>
+      <section class="annee">
+        <h2 class="annee-titre">Ton année ${esc(a)}</h2>
+        <div class="annee-grille">
+          ${carte(Analyse._fr(mots), `mots écrits${avant ? ` (${mots >= avant ? '+' : ''}${Analyse._fr(mots - avant)} par rapport à ${d.annee - 1})` : ''}`)}
+          ${carte(Analyse._fr(jours.length), 'jours d\'écriture')}
+          ${meilleur ? carte(Analyse._fr(seances[meilleur]), `mots le ${date(meilleur)}, ta meilleure journée`) : ''}
+          ${record > 1 ? carte(record, 'jours d\'affilée, ta plus longue série') : ''}
+          ${jourFavori ? carte(jourFavori, 'le jour où tu écris le plus') : ''}
+          ${moisFavori ? carte(nomMois(moisFavori[0]), `ton mois le plus fécond (${Analyse._fr(moisFavori[1])} mots)`) : ''}
+          ${moment ? carte(moment, `ton moment préféré pour écrire (vers ${heure} h)`) : ''}
+          ${carte(Analyse._fr(d.versions), `versions gardées, sur ${d.episodes_touches} épisode(s)`)}
+          ${d.envois ? carte(Analyse._fr(d.envois), 'épisodes envoyés à tes lecteurs') : ''}
+        </div>
+        ${d.reprises.length ? `<h3 class="an-label">Les épisodes que tu as le plus repris</h3><ol class="annee-liste">${d.reprises.map(r => `<li><strong>${esc(r.code)}</strong> ${esc(r.titre || '')} <span class="an-note">${r.versions} versions</span></li>`).join('')}</ol>` : ''}
+        ${d.bavards.length ? `<h3 class="an-label">Ceux qui parlent le plus dans la série</h3><ol class="annee-liste">${d.bavards.map(b => `<li><strong>${esc(b.nom)}</strong> <span class="an-note">${Analyse._fr(b.repliques)} répliques</span></li>`).join('')}</ol>` : ''}
+        ${!mots && !d.versions ? '<p class="an-note">Rien d\'écrit dans le Brouillon cette année pour l\'instant : le bilan se remplit au fil des séances.</p>' : ''}
+        ${heure === null && mots ? '<p class="an-note">L\'heure d\'écriture est notée depuis cette version de l\'app : ton moment préféré apparaîtra au fil des séances.</p>' : ''}
+      </section>`;
+  },
+
+  // La tension, chapitre par chapitre : phrases courtes et ponctuation vive. Une indication, pas une note.
+  async _chargerTension() {
+    const d = await api.get('roman_sens').catch(() => null);
+    const slot = document.getElementById('ec-tension');
+    if (!slot || !d) return;
+    const ch = d.chapitres;
+    if (ch.length < 2) { slot.innerHTML = ''; return; }
+    const W = 700, H = 150, X = i => 20 + (i * (W - 40)) / (ch.length - 1), Y = v => H - 15 - (v * (H - 30)) / 100;
+    const moy = Math.round(ch.reduce((t, c) => t + c.tension, 0) / ch.length);
+    const plats = [];
+    for (let i = 2; i < ch.length; i++) if ([0, 1, 2].every(k => ch[i - k].tension < moy * 0.6)) plats.push(ch[i].code);
+    slot.innerHTML = `<div class="an-entete"><h2 class="an-titre">La tension</h2><span class="an-note">moyenne ${moy} / 100</span></div>
+      <svg class="arc-courbe" viewBox="0 0 ${W} ${H}" role="img" aria-label="Tension de chaque chapitre"><line x1="20" x2="${W - 20}" y1="${Y(moy)}" y2="${Y(moy)}" class="arc-zero"/><polyline points="${ch.map((c, i) => `${X(i)},${Y(c.tension)}`).join(' ')}"/>${ch.map((c, i) => `<circle cx="${X(i)}" cy="${Y(c.tension)}" r="3"><title>${esc(c.code)} : ${c.tension} · phrases de ${c.phrase_moyenne} mots en moyenne</title></circle>`).join('')}</svg>
+      <p class="an-note">Calculée sur le texte : la part de phrases courtes (8 mots ou moins) et le nombre de ! et de ?. Une course-poursuite monte, une description descend. ${plats.length ? `Trois chapitres calmes d'affilée jusqu'à ${plats.slice(0, 4).map(esc).join(', ')} : un temps de respiration voulu, ou un passage qui s'endort ?` : ''}</p>`;
+  },
+
+  // ─── Roman : les cinq sens et les tics de plume ───
+
+  vueSens() {
+    return '<div class="an-vue" id="ec-sens"><p class="an-note">Lecture des chapitres…</p></div>';
+  },
+
+  async _chargerSens() {
+    this._sens = await api.get('roman_sens');
+    const slot = document.getElementById('ec-sens');
+    if (!slot || !this._sens) return;
+    const ch = this._sens.chapitres;
+    if (!ch.length) { slot.innerHTML = '<p class="an-note">Aucun chapitre écrit pour l\'instant.</p>'; return; }
+    const SENS = [['vue', 'Vue', '#9fb7e8'], ['ouie', 'Ouïe', '#e8a85c'], ['odorat', 'Odorat', '#9be38f'], ['toucher', 'Toucher', '#f08fb0'], ['gout', 'Goût', '#c9b8ff']];
+    const moyenne = k => ch.reduce((t, c) => t + c.sens[k], 0) / ch.length;
+    const max = Math.max(0.1, ...ch.flatMap(c => SENS.map(([k]) => c.sens[k])));
+    const oublies = SENS.filter(([k]) => moyenne(k) < 0.5).map(([, l]) => l.toLowerCase());
+    const advMoy = ch.reduce((t, c) => t + c.adverbes, 0) / ch.length;
+    const tics = {};
+    ch.forEach(c => Object.entries(c.tics).forEach(([t, n]) => { tics[t] = (tics[t] || 0) + n; }));
+    const totalMots = ch.reduce((t, c) => t + c.mots, 0);
+    slot.innerHTML = `
+      <section class="an-carte">
+        <div class="an-entete"><h2 class="an-titre">Les cinq sens</h2><span class="an-note">mots des sens pour 1 000 mots</span></div>
+        <p class="an-note">Chaque chapitre, ce qu'on y voit, entend, sent, touche et goûte. ${oublies.length ? `Dans tout le livre, presque rien pour ${oublies.join(', ')} : un détail de ce côté-là donne souvent du corps à une scène.` : 'Les cinq sens sont tous présents dans le livre.'}</p>
+        <div class="sens-legende">${SENS.map(([, l, c]) => `<span><i style="background:${c}"></i>${l}</span>`).join('')}</div>
+        <div class="sens-liste">${ch.map(c => `<div class="sens-ligne"><span>${this._lien(esc(c.code), 'ouvrirEpisode', c.id)}</span><div class="sens-barres">${SENS.map(([k, l, col]) => `<i style="width:${Math.round(c.sens[k] / max * 100)}%;background:${col}" title="${l} : ${c.sens[k]} pour 1 000 mots"></i>`).join('')}</div></div>`).join('')}</div>
+      </section>
+      <section class="an-carte">
+        <div class="an-entete"><h2 class="an-titre">Les tics de plume</h2><span class="an-note">${Analyse._fr(totalMots)} mots lus</span></div>
+        <p class="an-note">Rien d'interdit ici : seulement ce qui revient le plus. Les adverbes en -ment, les petits mots de remplissage, et le même mot répété à moins de trente mots d'intervalle.</p>
+        <p><strong>${Analyse._num(Math.round(advMoy * 10) / 10)}</strong> adverbes en -ment pour 1 000 mots en moyenne. Les plus revenus : ${Object.entries(tics).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([t, n]) => `« ${esc(t)} » ${n}`).join(' · ') || 'aucun'}.</p>
+        <ul class="ec-liste">${[...ch].sort((a, b) => b.nb_proches / Math.max(1, b.mots) - a.nb_proches / Math.max(1, a.mots)).slice(0, 15).map(c => `<li class="${c.adverbes > advMoy * 1.6 ? 'ec-orange' : ''}"><span>${this._lien(esc(c.code), 'ouvrirEpisode', c.id)} ${esc(c.titre || '')}<br><span class="an-note">répétitions proches : ${Object.entries(c.proches).map(([w, n]) => `${esc(w)} (${n})`).join(', ') || 'aucune'}</span></span><span class="an-note">${c.adverbes} adv. ‰${c.adverbes > advMoy * 1.6 ? ' · beaucoup' : ''}</span></li>`).join('')}</ul>
+      </section>`;
+  },
+
+  // ─── Scénario : ce que contiennent les dix premières pages (ce que lit d'abord un producteur) ───
+
+  _htmlDebut(d) {
+    const heros = d.principaux[0];
+    const alertes = [];
+    if (heros && heros.page > 5) alertes.push(`Le personnage qui parle le plus (${heros.nom}) n'apparaît qu'à la page ${heros.page}.`);
+    if (d.premiere_replique && d.premiere_replique > 3) alertes.push(`La première réplique arrive page ${d.premiere_replique}.`);
+    if (d.action > 70) alertes.push(`Les dix premières pages sont à ${d.action} % de l'action : beaucoup à lire avant d'entendre quelqu'un.`);
+    return `<section class="an-carte">
+      <h2 class="an-titre">Les dix premières pages</h2>
+      <p class="an-note">Ce qu'un lecteur pressé découvre d'abord. Les moments clés (élément déclencheur, pivots) se placent dans Structure ; ici, qui on rencontre et quand.</p>
+      <ul class="ec-liste">${d.principaux.map(p => `<li><span>${esc(p.nom)}</span><span class="${p === heros && p.page > 5 ? 'ec-orange' : ''}">apparaît page ${p.page}</span></li>`).join('')}
+        <li><span>Première réplique</span><span>page ${d.premiere_replique ?? '—'}</span></li><li><span>Séquences dans les 10 pages</span><span>${d.scenes}</span></li><li><span>Part d'action</span><span>${d.action} %</span></li></ul>
+      ${alertes.map(a => `<p class="ec-orange">${esc(a)}</p>`).join('')}
+      <p class="an-note">Pages estimées à 55 lignes en Courier 12 (l'export donne la mise en page exacte).</p>
+    </section>`;
+  },
+
+  // ─── Roman : les portraits ───
+
+  vuePortraits() {
+    return '<div class="an-vue" id="ec-portraits"><p class="an-note">Lecture des descriptions…</p></div>';
+  },
+
+  async _chargerPortraits() {
+    const d = await api.get('portraits');
+    const slot = document.getElementById('ec-portraits');
+    if (!slot || !d) return;
+    const contre = d.personnages.reduce((t, p) => t + p.contradictions.length, 0);
+    slot.innerHTML = `<p class="an-note">L'app relève ce que le texte dit du physique de chaque personnage (yeux, cheveux, taille, barbe, lunettes) dans les phrases qui le nomment, ou juste après (« Il a les yeux verts »). ${contre ? `<strong class="ec-orange">${contre} contradiction(s)</strong> à vérifier : ce n'est peut-être pas une erreur (une teinture, une autre lumière), mais le lecteur, lui, le remarquera.` : 'Aucune contradiction trouvée.'}</p>
+      ${d.personnages.length ? d.personnages.map(p => `<section class="an-carte">
+        <div class="an-entete"><h2 class="an-titre">${esc(p.nom)}</h2>${p.contradictions.length ? `<span class="ec-orange">${p.contradictions.length} contradiction(s)</span>` : ''}</div>
+        ${p.contradictions.map(c => `<p class="ec-orange"><strong>${esc(c.trait)}</strong> : ${c.valeurs.map(v => `${esc(v.brut)} (${this._lien(esc(v.code), 'ouvrirEpisode', v.ep)})`).join(', ')}</p>`).join('')}
+        <ul class="ec-liste">${Object.entries(p.traits).map(([t, vus]) => `<li><span><strong>${esc(t)}</strong> : ${[...new Set(vus.map(v => v.brut))].map(esc).join(', ')}<br><span class="an-note vo-brut">« ${esc(vus[0].phrase)} » (${esc(vus[0].code)})</span></span><span class="an-note">${vus.length} fois</span></li>`).join('')}</ul>
+      </section>`).join('') : '<section class="an-carte"><p class="an-note">Aucune description physique trouvée pour les personnages des fiches.</p></section>'}`;
+  },
+
+  // ─── Théâtre : la conduite lumière et son ───
+
+  vueConduite() {
+    return '<div class="an-vue" id="ec-conduite"><p class="an-note">Lecture des didascalies…</p></div>';
+  },
+
+  async _chargerConduite() {
+    this._conduite = await api.get('conduite');
+    const slot = document.getElementById('ec-conduite');
+    const d = this._conduite;
+    if (!slot || !d) return;
+    slot.innerHTML = `<section class="an-carte">
+      <div class="an-entete"><h2 class="an-titre">Conduite lumière et son</h2><span class="an-note">${d.cues.length} effet(s)
+        ${d.cues.length ? '<button type="button" class="btn btn-secondary btn-sm" onclick="Ecriture.exporterConduite()">Tableur (.csv)</button>' : ''}</span></div>
+      <p class="an-note">La feuille de la régie, tirée des didascalies qui parlent de lumière (noir, projecteur, la nuit tombe…) ou de son (musique, sonnerie, on frappe…). Le « top » est la fin de la réplique qui déclenche l'effet. À compléter avec le régisseur : l'app ne fait que la première version.</p>
+      ${d.cues.length ? `<div class="an-table"><table><thead><tr><th scope="col">N°</th><th scope="col">Acte · scène</th><th scope="col">Effet</th><th scope="col">Didascalie</th><th scope="col">Top</th></tr></thead>
+      <tbody>${d.cues.map(c => `<tr><td>${c.n}</td><td>${c.acte} · ${c.scene}</td><td>${esc(c.type)}</td><td class="vo-brut">${esc(c.texte)}</td><td class="an-note vo-brut">${esc(c.top)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="an-note">Aucune didascalie ne parle de lumière ou de son.</p>'}
+    </section>`;
+  },
+
+  exporterConduite() {
+    const c = v => `"${String(v).replace(/"/g, '""')}"`;
+    const lignes = [['N°', 'Acte', 'Scène', 'Effet', 'Didascalie', 'Top'], ...(this._conduite?.cues || []).map(x => [x.n, x.acte, x.scene, x.type, x.texte, x.top])];
+    this._telecharger('conduite.csv', '\ufeff' + lignes.map(l => l.map(c).join(';')).join('\r\n'), 'text/csv;charset=utf-8');
+  },
+
+  // ─── Série : l'ouverture de chaque épisode ───
+
+  vueAccroches() {
+    return '<div class="an-vue" id="ec-accroches"><p class="an-note">Lecture des ouvertures…</p></div>';
+  },
+
+  async _chargerAccroches() {
+    const d = await api.get('accroches');
+    const slot = document.getElementById('ec-accroches');
+    if (!slot || !d) return;
+    const eps = d.episodes;
+    if (!eps.length) { slot.innerHTML = '<p class="an-note">Aucun épisode écrit pour l\'instant.</p>'; return; }
+    const fins = { question: 'finit sur une question', chute: 'finit sur une chute', suspendue: 'reste en suspens', plate: 'finit à plat' };
+    const compte = k => eps.filter(e => e.fin === k).length;
+    const moy = Math.round(eps.reduce((t, e) => t + e.part, 0) / eps.length);
+    slot.innerHTML = `${Analyse._kpis([{ l: 'Part de l\'ouverture', v: `${moy} %`, s: 'de l\'épisode, en moyenne' }, { l: 'Question ou chute', v: compte('question') + compte('chute') + compte('suspendue'), s: `sur ${eps.length} ouvertures` }, { l: 'À plat', v: compte('plate'), s: 'rien ne pousse à rester' }])}
+      <section class="an-carte">
+        <h2 class="an-titre">L'ouverture de chaque épisode</h2>
+        <p class="an-note">La scène avant le générique (si le mot « générique » est écrit), sinon la première scène. Sa longueur dans l'épisode, et sa dernière ligne : une question, une chute (!) ou des points de suspension donnent envie de rester ; une fin à plat, moins.</p>
+        <ul class="ec-liste">${eps.map(e => `<li class="${e.fin === 'plate' ? '' : ''}"><span>${this._lien(esc(e.code), 'ouvrirBrouillon', e.id)} ${esc(e.titre || '')}${e.generique ? ' <span class="an-note">(avant le générique)</span>' : ''}<br><span class="an-note vo-brut">« ${esc(e.derniere)} »</span></span><span class="${e.fin === 'plate' ? 'an-note' : ''}">${e.part} % · ${fins[e.fin]}</span></li>`).join('')}</ul>
+      </section>
+      ${(d.fins_repetees || []).length ? `<section class="an-carte"><div class="an-entete"><h2 class="an-titre">Les fins qui se répètent</h2><span class="an-note">${d.fins_repetees.length} fin(s)</span></div>
+        <p class="an-note">La même dernière ligne dans plusieurs épisodes. Un gimmick voulu, ou une fin qu'on reprend sans s'en rendre compte ?</p>
+        <ul class="ec-liste">${d.fins_repetees.map(g => `<li><span class="vo-brut">« ${esc(g[0].texte)} »</span><span>${g.map(x => this._lien(esc(x.code), 'ouvrirBrouillon', x.id)).join(', ')}</span></li>`).join('')}</ul></section>` : ''}`;
+  },
+
+  // ─── Scénario : les pavés d'action et la densité des séquences ───
+
+  vueLisibilite() {
+    return '<div class="an-vue" id="ec-lisibilite"><p class="an-note">Lecture du scénario…</p></div>';
+  },
+
+  async _chargerLisibilite() {
+    const d = await api.get('film_lisibilite');
+    const slot = document.getElementById('ec-lisibilite');
+    if (!slot || !d) return;
+    const seqs = d.sequences;
+    const paves = seqs.flatMap(s => s.paves.map(p => ({ ...p, s })));
+    const denses = seqs.filter(s => s.densite >= 70 && s.action >= 8);
+    const moy = seqs.length ? Math.round(seqs.reduce((t, s) => t + s.densite, 0) / seqs.length) : 0;
+    slot.innerHTML = `
+      ${Analyse._kpis([{ l: 'Pavés', v: paves.length, s: 'blocs d\'action de plus de 4 lignes' }, { l: 'Séquences très denses', v: denses.length, s: '70 % d\'action ou plus' }, { l: 'Part d\'action', v: `${moy} %`, s: 'en moyenne par séquence' }])}
+      <section class="an-carte">
+        <div class="an-entete"><h2 class="an-titre">Les pavés</h2><span class="an-note">${paves.length} bloc(s)</span></div>
+        <p class="an-note">Un lecteur de scénario survole les blocs d'action de plus de quatre lignes (à la largeur d'une page en Courier 12). Couper un pavé en deux paragraphes, ou en garder l'essentiel, rend la page plus rapide à lire.</p>
+        ${paves.length ? `<ul class="ec-liste">${paves.sort((a, b) => b.lignes - a.lignes).slice(0, 60).map(p => `<li class="${p.lignes >= 8 ? 'ec-orange' : ''}"><span>Séq. ${p.s.g} · ${this._lien(esc(p.s.code), 'ouvrirEpisode', p.s.ep)} · <span class="vo-brut">${esc(p.s.slug)}</span><br><span class="an-note vo-brut">${esc(p.debut)}…</span></span><span>${p.lignes} lignes</span></li>`).join('')}</ul>` : '<p class="an-note">Aucun pavé : toutes les actions tiennent en quatre lignes.</p>'}
+      </section>
+      ${Roman.film && d.debut ? this._htmlDebut(d.debut) : ''}
+      <section class="an-carte">
+        <h2 class="an-titre">La densité, séquence par séquence</h2>
+        <p class="an-note">La part de lignes d'action face aux dialogues. Une suite de séquences très denses ralentit la lecture ; une suite de dialogues seuls fait perdre l'image.</p>
+        <div class="dens-barres" role="img" aria-label="Part d'action de chaque séquence">${seqs.map(s => `<span style="height:${Math.max(3, s.densite)}%" class="${s.densite >= 70 && s.action >= 8 ? 'dense' : ''}" title="Séq. ${s.g} · ${esc(s.slug)} : ${s.densite} % d'action"></span>`).join('')}</div>
+      </section>`;
+  },
+
+  vueStyle() {
+    return '<div class="an-vue" id="ec-style"><p class="an-note">Lecture de la feuille de style…</p></div>';
+  },
+
   vueExport() {
     return '<div class="an-vue" id="ec-export"><p class="an-note">Mise en page…</p></div>';
   },
@@ -2757,12 +3246,6 @@ const Ecriture = {
     window.speechSynthesis?.cancel();
   },
 
-  lireBrouillonAloud() {
-    const champ = document.getElementById('ec-brouillon');
-    const choisi = champ.value.slice(champ.selectionStart, champ.selectionEnd);
-    this.lire(this.lireBrouillon(choisi || champ.value).lignes);
-  },
-
   // ─── Retours des lecteurs ────────────────────────────────────────────────
 
   async _chargerLecteurs() {
@@ -2935,8 +3418,85 @@ const Ecriture = {
   basculerFocus() {
     const atelier = document.getElementById('ec-atelier');
     atelier?.classList.toggle('ec-focus');
+    // En sortant de la concentration, le bruit de fond s'arrête
+    if (!atelier?.classList.contains('ec-focus')) Ambiance.arreter();
     document.getElementById('ec-brouillon')?.focus();
     this._majFocus();
+  },
+
+  _titreEp() {
+    const e = this.ordre?.[this.rang?.get(this.epId)];
+    return e ? `${this._code(e)}${e.t ? ` — ${e.t}` : ''}` : '';
+  },
+
+  // ─── Contraintes d'écriture : des règles qu'on se donne pour un épisode (à la façon de l'Oulipo) ───
+
+  CONTRAINTES: {
+    maxRepliques: ['Au plus N répliques', 'nombre'],
+    maxMots: ['Au plus N mots par réplique', 'nombre'],
+    sansMot: ['Sans le mot…', 'texte'],
+    questions: ['Ce personnage ne parle que par questions', 'texte'],
+    muet: ['Ce personnage ne dit rien', 'texte'],
+    minScenes: ['Au moins N scènes', 'nombre'],
+  },
+
+  _contraintes() {
+    try { const v = JSON.parse(this.notes[`contraintes:${this.epId}`] || '[]'); return Array.isArray(v) ? v.filter(c => c && this.CONTRAINTES[c.type]) : []; } catch (e) { return []; }
+  },
+
+  ajouterContrainte() {
+    const type = document.getElementById('ec-ct-type')?.value;
+    const valeur = (document.getElementById('ec-ct-valeur')?.value || '').trim();
+    if (!this.CONTRAINTES[type] || !valeur) { toast('Choisis une règle et sa valeur.', 'info'); return; }
+    if (this.CONTRAINTES[type][1] === 'nombre' && !(Number(valeur) > 0)) { toast('Il faut un nombre.', 'info'); return; }
+    this.note(`contraintes:${this.epId}`, JSON.stringify([...this._contraintes(), { type, valeur: valeur.slice(0, 60) }].slice(0, 12)));
+    this._majContraintes();
+  },
+
+  retirerContrainte(i) {
+    const l = this._contraintes();
+    l.splice(i, 1);
+    this.note(`contraintes:${this.epId}`, l.length ? JSON.stringify(l) : '');
+    this._majContraintes();
+  },
+
+  // Chaque règle vérifiée sur le brouillon : tenue ou pas, avec le détail
+  _verifierContrainte(c, lignes) {
+    const repliques = [];
+    let qui = null, cour = null;
+    lignes.forEach(l => {
+      if (l.type === 'perso') { qui = l.ligne.trim().replace(/\s*\(.*\)$/, '').toUpperCase(); cour = { qui, texte: '' }; repliques.push(cour); }
+      else if (l.type === 'dialogue' && cour) cour.texte += ` ${l.ligne.trim()}`;
+      else if (l.type !== 'parenthese') cour = null;
+    });
+    const plat = t => String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const nom = plat(c.valeur).toUpperCase();
+    const de = r => plat(r.qui).toUpperCase() === nom || plat(r.qui).toUpperCase().startsWith(`${nom} `);
+    switch (c.type) {
+      case 'maxRepliques': { const n = repliques.length; return [n <= Number(c.valeur), `${n} réplique(s)`]; }
+      case 'maxMots': { const trop = repliques.filter(r => (r.texte.match(/\S+/g) || []).length > Number(c.valeur)); return [!trop.length, trop.length ? `${trop.length} réplique(s) trop longue(s), la plus longue : ${Math.max(...trop.map(r => (r.texte.match(/\S+/g) || []).length))} mots` : 'toutes tiennent']; }
+      case 'sansMot': { const n = (plat(lignes.map(l => l.ligne).join(' ')).match(new RegExp(`(?<![\\p{L}])${plat(c.valeur).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}])`, 'gu')) || []).length; return [!n, n ? `${n} fois` : 'jamais']; }
+      case 'questions': { const siens = repliques.filter(de); const non = siens.filter(r => r.texte.trim() && !/\?\s*[»"]?\s*$/.test(r.texte.trim())); return [!non.length, siens.length ? `${siens.length - non.length} / ${siens.length} répliques en question` : 'ne parle pas encore']; }
+      case 'muet': { const n = repliques.filter(de).length; return [!n, n ? `${n} réplique(s)` : 'silencieux']; }
+      case 'minScenes': { const n = lignes.filter(l => l.type === 'scene').length; return [n >= Number(c.valeur), `${n} scène(s)`]; }
+      default: return [true, ''];
+    }
+  },
+
+  _majContraintes() {
+    const slot = document.getElementById('ec-contraintes');
+    if (!slot) return;
+    const liste = this._contraintes();
+    const lignes = this.classerLignes(this._texteBrouillon());
+    const resultats = liste.map(c => this._verifierContrainte(c, lignes));
+    const tenues = resultats.filter(r => r[0]).length;
+    slot.innerHTML = `<details ${liste.length || this._contraintesOuvert ? 'open' : ''} ontoggle="Ecriture._contraintesOuvert = this.open">
+      <summary class="an-label">Contraintes${liste.length ? ` (${tenues}/${liste.length} tenues)` : ''}</summary>
+      ${liste.length ? `<ul class="ec-liste">${liste.map((c, i) => `<li class="${resultats[i][0] ? '' : 'ec-orange'}"><span>${resultats[i][0] ? '✓' : '✗'} ${esc(this.CONTRAINTES[c.type][0].replace('N ', `${c.valeur} `).replace('…', ` « ${c.valeur} »`).replace('Ce personnage', c.valeur))}<br><span class="an-note">${esc(resultats[i][1])}</span></span><button type="button" class="ec-lien" onclick="Ecriture.retirerContrainte(${i})">retirer</button></li>`).join('')}</ul>` : '<p class="an-note">Des règles à se donner pour cet épisode, comme un jeu : l\'app vérifie à mesure que tu écris.</p>'}
+      <div class="an-ligne"><select id="ec-ct-type" aria-label="Règle">${Object.entries(this.CONTRAINTES).map(([k, [l]]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>
+        <input id="ec-ct-valeur" type="text" maxlength="60" placeholder="Nombre, mot ou nom" aria-label="Valeur de la règle">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="Ecriture.ajouterContrainte()">Ajouter</button></div>
+    </details>`;
   },
 
   // ─── Scènes, remplacement et commentaires du brouillon ───────────────────
@@ -2944,6 +3504,7 @@ const Ecriture = {
   _majAtelier() {
     this._majScenes();
     this._majCommentaires();
+    this._majContraintes();
     if (this.rechQ) this._majRecherche();
   },
 
@@ -2955,15 +3516,90 @@ const Ecriture = {
     return this.classerLignes(texte).map((l, i) => ({ ...l, i })).filter(l => l.type === 'scene').map(l => ({ debut: l.i, titre: l.ligne.trim() }));
   },
 
+  // ─── Révisions en couleur d'un épisode : comme sur un tournage, chaque scène garde la couleur de la version
+  // où son texte est apparu ; ce qui a changé depuis la dernière version figée (ou le dernier envoi) se voit ───
+
+  _hashTexte(t) {
+    const s = String(t).toLowerCase().replace(/\s+/g, ' ').trim();
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0).toString(36);
+  },
+
+  _scenesEmpreintes(texte) {
+    const lignes = String(texte).split('\n');
+    const scenes = this._scenesDe(texte);
+    return scenes.map((s, n) => ({ ...s, h: this._hashTexte(lignes.slice(s.debut, n + 1 < scenes.length ? scenes[n + 1].debut : lignes.length).join('\n')) }));
+  },
+
+  _lireRevisions(brut) {
+    try { const v = JSON.parse(brut || '[]'); return Array.isArray(v) ? v.filter(r => r && Array.isArray(r.h) && typeof r.couleur === 'string') : []; } catch (e) { return []; }
+  },
+
+  _revisionsEp(id = this.epId) {
+    return this._lireRevisions(this.notes?.[`revisions:${id}`]);
+  },
+
+  // Fige la version d'un épisode (depuis le brouillon, ou depuis l'envoi à un lecteur) ; rien de neuf si rien n'a changé
+  async figerRevisionEpisode(id, texte, note = '') {
+    const cle = `revisions:${id}`;
+    const toutes = this.notes && cle in this.notes ? this.notes : await api.get('analyse_notes').catch(() => ({}));
+    const revs = this._lireRevisions(toutes?.[cle]);
+    const h = this._scenesEmpreintes(texte).map(s => s.h);
+    const derniere = revs[revs.length - 1];
+    if (derniere && derniere.h.length === h.length && derniere.h.every((x, i) => x === h[i])) return { revs, nouvelle: false };
+    revs.push({ couleur: REVISION_COULEURS[revs.length % REVISION_COULEURS.length][0], note: String(note).slice(0, 200), date: new Date().toISOString(), h });
+    const valeur = JSON.stringify(revs.slice(-30));
+    if (this.notes) this.notes[cle] = valeur;
+    await api.put('analyse_notes', { cle, valeur });
+    return { revs, nouvelle: true };
+  },
+
+  async figerRevisionBrouillon() {
+    const note = prompt('Une note pour cette version (facultatif) : à qui elle part, ce qui a changé…', '');
+    if (note === null) return;
+    const r = await this.figerRevisionEpisode(this.epId, this._texteBrouillon(), note);
+    toast(r.nouvelle ? `Version ${r.revs[r.revs.length - 1].couleur.toLowerCase()} figée.` : 'Rien n\'a changé depuis la dernière version figée.', r.nouvelle ? 'success' : 'info');
+    this._majScenes();
+  },
+
+  async retirerRevisionBrouillon() {
+    const revs = this._revisionsEp();
+    if (!revs.length || !confirm(`Retirer la version ${revs[revs.length - 1].couleur.toLowerCase()} ? Le texte ne change pas.`)) return;
+    await this.note(`revisions:${this.epId}`, revs.length > 1 ? JSON.stringify(revs.slice(0, -1)) : '');
+    this._majScenes();
+  },
+
+  _htmlRevisions(scenes) {
+    const revs = this._revisionsEp();
+    const derniere = revs[revs.length - 1];
+    const prochaine = REVISION_COULEURS[revs.length % REVISION_COULEURS.length][0].toLowerCase();
+    if (!derniere) return `<p class="an-note ec-rev-ligne"><button type="button" class="ec-lien" onclick="Ecriture.figerRevisionBrouillon()">Figer cette version</button> : les suivantes marqueront en couleur les scènes changées.</p>`;
+    const changees = scenes.filter(s => !derniere.h.includes(s.h)).length;
+    const quand = new Date(derniere.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    return `<p class="an-note ec-rev-ligne"><span class="ec-rev" style="background:${this._couleurRev(derniere.couleur)}"></span>Version ${esc(derniere.couleur.toLowerCase())} du ${esc(quand)}${derniere.note ? ` (${esc(derniere.note)})` : ''} · ${changees ? `<strong class="ec-orange">${changees} scène(s) changée(s) depuis</strong>` : 'rien de changé depuis'}
+      · <button type="button" class="ec-lien" onclick="Ecriture.figerRevisionBrouillon()">Figer (${esc(prochaine)})</button> · <button type="button" class="ec-lien" onclick="Ecriture.retirerRevisionBrouillon()">retirer</button></p>`;
+  },
+
   _majScenes() {
     const slot = document.getElementById('ec-scenes');
     if (!slot) return;
-    const scenes = this._scenesDe(this._texteBrouillon());
+    const scenes = this._scenesEmpreintes(this._texteBrouillon());
+    const revs = this._revisionsEp();
+    const derniere = revs[revs.length - 1];
+    const marque = s => {
+      if (!derniere) return '';
+      const origine = revs.find(r => r.h.includes(s.h));
+      return origine && derniere.h.includes(s.h)
+        ? `<span class="ec-rev" style="background:${this._couleurRev(origine.couleur)}" title="Texte de la version ${esc(origine.couleur.toLowerCase())}"></span>`
+        : '<span class="ec-rev nouvelle" title="Changée depuis la dernière version figée"></span>';
+    };
     slot.innerHTML = `
       <p class="an-label">Scènes (${scenes.length})</p>
+      ${scenes.length ? this._htmlRevisions(scenes) : ''}
       ${scenes.length ? `<ol class="ec-scenes">${scenes.map((s, n) => `
         <li draggable="true" data-debut="${s.debut}" ondragstart="Ecriture._sceneTiree = ${n}" ondragover="event.preventDefault()" ondrop="event.preventDefault(); Ecriture.deplacerScene(Ecriture._sceneTiree, ${n})">
-          <button type="button" class="ec-lien" title="${esc(s.titre)}" onclick="Ecriture.allerLigne(${s.debut})">${n + 1}. ${esc(s.titre)}</button>
+          <button type="button" class="ec-lien" title="${esc(s.titre)}" onclick="Ecriture.allerLigne(${s.debut})">${marque(s)}${n + 1}. ${esc(s.titre)}</button>
           <span class="ec-scene-fleches">
             <button type="button" class="ec-lien" aria-label="Monter la scène ${n + 1}" ${n ? '' : 'disabled'} onclick="Ecriture.deplacerScene(${n}, ${n - 1})">↑</button>
             <button type="button" class="ec-lien" aria-label="Descendre la scène ${n + 1}" ${n < scenes.length - 1 ? '' : 'disabled'} onclick="Ecriture.deplacerScene(${n}, ${n + 1})">↓</button>
@@ -2986,6 +3622,33 @@ const Ecriture = {
     const span = document.getElementById('ec-miroir')?.children[ligne];
     if (champ && span) champ.scrollTop = Math.max(0, span.offsetTop - 60);
     this._suivreDefilement();
+  },
+
+  // Lire le brouillon à voix haute depuis le curseur : une voix par personnage, la ligne lue suit dans l'éditeur
+  ecouter() {
+    const boutons = t => document.querySelectorAll('.ec-ecouter-btn').forEach(b => { b.textContent = t; });
+    if (Lecture.enCours) { Lecture.arreter(); boutons('▶ Écouter'); return; }
+    const champ = document.getElementById('ec-brouillon');
+    if (!champ) return;
+    const depuis = champ.value.slice(0, champ.selectionStart).split('\n').length - 1;
+    // Une sélection : seulement elle ; sinon, du curseur jusqu'à la fin
+    const jusqua = champ.selectionEnd > champ.selectionStart ? champ.value.slice(0, champ.selectionEnd).split('\n').length - 1 : Infinity;
+    let qui = null;
+    const lignes = [];
+    this.classerLignes(champ.value).forEach((l, i) => {
+      if (l.type === 'perso') { qui = l.ligne.trim().replace(/\s*\(.*\)$/, ''); return; }
+      if (l.type === 'vide' || l.type === 'scene') qui = null;
+      if (i < depuis || i > jusqua || ['vide', 'note', 'parenthese', 'perso'].includes(l.type) || !l.ligne.trim()) return;
+      lignes.push({ qui: l.type === 'dialogue' ? qui : null, texte: l.ligne.trim(), ligne: i });
+    });
+    if (!lignes.length) { toast('Rien à lire après le curseur.', 'info'); return; }
+    Lecture.lignes = lignes;
+    Lecture.i = 0;
+    Lecture.didascalies = true;
+    Lecture.surLigne = l => { if (Number.isInteger(l.ligne)) { this._defiler(l.ligne); const pos = champ.value.split('\n').slice(0, l.ligne).reduce((a, x) => a + x.length + 1, 0); champ.setSelectionRange(pos, pos); } };
+    Lecture.surFin = () => boutons('▶ Écouter');
+    boutons('■ Arrêter');
+    Lecture.basculer();
   },
 
   allerLigne(ligne) {
@@ -3336,22 +3999,71 @@ const Ecriture = {
     return `<?xml version="1.0" encoding="UTF-8" standalone="no" ?>\n<FinalDraft DocumentType="Script" Template="No" Version="5">\n  <Content>\n${corps}\n  </Content>\n</FinalDraft>\n`;
   },
 
-  _imprimerScript(e, lignes) {
-    const page = window.open('', '_blank');
-    if (!page) { toast('Autorise les fenêtres pour imprimer.', 'info'); return; }
-    page.document.write(`<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${esc(this._code(e))} ${esc(e.t || '')}</title><style>
+  // Le script au format scénario, en HTML : un épisode (Exporter → PDF) ou plusieurs (envoi à un lecteur)
+  SCRIPT_STYLE: `
       @page { size: A4; margin: 2.5cm 2.5cm 2.5cm 3.5cm; }
       body { font: 12pt/1.2 "Courier New", Courier, monospace; color: #000; background: #fff; max-width: 15cm; margin: 0 auto; }
       h1 { font-size: 12pt; text-align: center; text-transform: uppercase; margin: 0 0 2em; }
+      section + section { break-before: page; }
       p { margin: 0; white-space: pre-wrap; }
       .scene { margin-top: 1.5em; font-weight: bold; text-transform: uppercase; break-after: avoid; }
       .action { margin-top: 1em; }
       .perso { margin: 1em 0 0 5.5cm; break-after: avoid; }
       .parenthese { margin-left: 4.5cm; }
-      .dialogue { margin: 0 2cm 0 3cm; }
-    </style></head><body><h1>${esc(this._code(e))} — ${esc(e.t || 'Sans titre')}</h1>
-      ${lignes.filter(l => l.type !== 'vide').map(l => `<p class="${l.type}">${esc(l.ligne.trim())}</p>`).join('')}
-    </body></html>`);
+      .dialogue { margin: 0 2cm 0 3cm; }`,
+
+  htmlScript(titre, lignes) {
+    return `<section><h1>${esc(titre)}</h1>
+      ${lignes.filter(l => l.type !== 'vide' && l.type !== 'note').map(l => `<p class="${l.type}">${esc(l.ligne.trim())}</p>`).join('')}</section>`;
+  },
+
+  documentScript(titre, sections, filigrane = '') {
+    return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${esc(titre)}</title><style>${this.SCRIPT_STYLE}</style></head><body>${htmlFiligrane(filigrane)}${sections.join('')}</body></html>`;
+  },
+
+  // La version de lecture : un seul fichier HTML qui s'adapte à l'écran (téléphone, liseuse, ordinateur),
+  // avec un sommaire, le mode sombre du lecteur, et sans rien à charger d'ailleurs
+  LECTURE_STYLE: `
+      :root { color-scheme: light dark; --fond: #fbfaf7; --encre: #1d1c1a; --doux: #6b6862; --trait: #e4e0d8; }
+      @media (prefers-color-scheme: dark) { :root { --fond: #161514; --encre: #e9e6e0; --doux: #9a968f; --trait: #2e2c29; } }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--fond); color: var(--encre); font: 1.0625rem/1.6 Georgia, "Iowan Old Style", "Times New Roman", serif; -webkit-text-size-adjust: 100%; }
+      main { max-width: 40rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+      header h1 { font-size: 1.6rem; line-height: 1.25; margin: 1rem 0 .25rem; }
+      header p { color: var(--doux); margin: 0 0 1.5rem; }
+      nav { border-top: 1px solid var(--trait); border-bottom: 1px solid var(--trait); padding: .75rem 0; margin-bottom: 2rem; }
+      nav ol { margin: 0; padding-left: 1.4rem; }
+      nav a { color: inherit; }
+      section { padding-top: 1rem; }
+      section + section { border-top: 1px solid var(--trait); margin-top: 3rem; break-before: page; }
+      h2 { font-size: 1.3rem; margin: 0 0 1.25rem; }
+      p { margin: 0; }
+      .scene { margin: 2rem 0 .75rem; font: 700 .85rem/1.4 system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--doux); }
+      .action { margin: .9rem 0; }
+      .perso { margin: 1.1rem 0 0; font: 700 .8rem/1.4 system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+      .parenthese { font-style: italic; color: var(--doux); }
+      .dialogue { margin: 0 0 0 1rem; }
+      .transition { margin: 1rem 0; text-align: right; font: .8rem system-ui, sans-serif; text-transform: uppercase; color: var(--doux); }
+      .haut { display: inline-block; margin-top: 2rem; font: .85rem system-ui, sans-serif; color: var(--doux); }
+      @media (min-width: 48rem) { .dialogue { margin-left: 3rem; margin-right: 3rem; } .perso { margin-left: 3rem; } }
+      @media print { nav, .haut { display: none; } body { background: #fff; color: #000; } }`,
+
+  documentLecture(titre, episodes, sousTitre = '', filigrane = '') {
+    const ancre = i => `ep-${i + 1}`;
+    const sommaire = episodes.length > 1 ? `<nav aria-label="Sommaire"><ol>${episodes.map((e, i) => `<li><a href="#${ancre(i)}">${esc(e.titre)}</a></li>`).join('')}</ol></nav>` : '';
+    const corps = episodes.map((e, i) => `<section id="${ancre(i)}"><h2>${esc(e.titre)}</h2>
+      ${e.lignes.filter(l => l.type !== 'vide' && l.type !== 'note').map(l => `<p class="${esc(l.type)}">${esc(l.ligne.trim())}</p>`).join('\n')}
+      ${episodes.length > 1 ? '<a class="haut" href="#haut">↑ Sommaire</a>' : ''}</section>`).join('\n');
+    return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(titre)}</title><style>${this.LECTURE_STYLE}</style></head>
+<body>${htmlFiligrane(filigrane)}<main><header id="haut"><h1>${esc(titre)}</h1>${sousTitre ? `<p>${esc(sousTitre)}</p>` : ''}</header>${sommaire}${corps}</main></body></html>`;
+  },
+
+  _imprimerScript(e, lignes) {
+    const page = window.open('', '_blank');
+    if (!page) { toast('Autorise les fenêtres pour imprimer.', 'info'); return; }
+    const titre = `${this._code(e)} — ${e.t || 'Sans titre'}`;
+    page.document.write(this.documentScript(`${this._code(e)} ${e.t || ''}`.trim(), [this.htmlScript(titre, lignes)]));
     page.document.close();
     page.focus();
     page.print();

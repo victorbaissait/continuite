@@ -147,7 +147,41 @@ const Genres = {
         <ul class="ec-liste">${actes.map(a => `<li><span>Acte ${a.n} · ${a.scenes.length} scène(s)</span><span>${minutes(duree(a))}</span></li>`).join('')}</ul>
         <p class="an-note">Environ 150 mots dits par minute, plus le temps du jeu muet décrit dans les didascalies.</p>
       </section>
+      ${this._fatigue(actes, liste.map(([n]) => n))}
     `;
+  },
+
+  // La fatigue du comédien : sa plus longue tirade, et le plus long moment passé en scène sans sortir
+  _fatigue(actes, noms) {
+    const minutes = mots => Math.round(mots / 150);
+    const lignes = noms.map(n => {
+      let tirade = { mots: 0, ou: '' };
+      let suite = { scenes: 0, mots: 0, ou: '' };
+      actes.forEach(a => {
+        let cours = { scenes: 0, mots: 0, debut: null };
+        a.scenes.forEach(sc => {
+          const t = (sc.tirade || {})[n] || 0;
+          if (t > tirade.mots) tirade = { mots: t, ou: `acte ${a.n}, scène ${sc.n}` };
+          // En scène sans sortir : la présence continue, jusqu'à ce qu'il sorte ou que la scène suivante ne le compte plus
+          if (sc.presents.includes(n)) {
+            if (!cours.scenes) cours.debut = sc.n;
+            cours.scenes++;
+            cours.mots += sc.mots + sc.mots_did / 2;
+            if (cours.scenes > suite.scenes || (cours.scenes === suite.scenes && cours.mots > suite.mots)) suite = { scenes: cours.scenes, mots: cours.mots, ou: `acte ${a.n}, scènes ${cours.debut} à ${sc.n}` };
+            if (sc.sorties.includes(n)) cours = { scenes: 0, mots: 0, debut: null };
+          } else cours = { scenes: 0, mots: 0, debut: null };
+        });
+      });
+      return { n, tirade, suite };
+    }).filter(x => x.tirade.mots || x.suite.scenes);
+    if (!lignes.length) return '';
+    const lourd = x => x.tirade.mots >= 250 || minutes(x.suite.mots) >= 25;
+    return `<section class="an-carte">
+      <div class="an-entete"><h2 class="an-titre">La fatigue des comédiens</h2><span class="an-note">${lignes.filter(lourd).length} rôle(s) à surveiller</span></div>
+      <p class="an-note">Pour chaque rôle : sa plus longue tirade (à apprendre d'un seul bloc), et le plus long moment passé en scène sans sortir, en temps de jeu estimé. Au-delà de 250 mots d'affilée, ou de 25 minutes sans pause, le comédien n'a pas le temps de souffler ni de se changer.</p>
+      <div class="an-table"><table><thead><tr><th scope="col">Rôle</th><th scope="col">Plus longue tirade</th><th scope="col">En scène sans sortir</th></tr></thead>
+      <tbody>${lignes.map(x => `<tr class="${lourd(x) ? 'ec-orange' : ''}"><td>${esc(x.n)}</td><td>${x.tirade.mots ? `${x.tirade.mots} mots · ${esc(x.tirade.ou)}` : '—'}</td><td>${x.suite.scenes} scène(s), environ ${minutes(x.suite.mots) || 'moins d\'une'} min · ${esc(x.suite.ou)}</td></tr>`).join('')}</tbody></table></div>
+    </section>`;
   },
 
   _didascalies() {
@@ -273,7 +307,27 @@ const Genres = {
             <p class="an-note">« [garder] » dans l'image marque un plan qui reste dans la version courte.</p></section>
         </div>
       </div>
+      ${this._marque(s, e)}
     `;
+  },
+
+  // La marque à l'écran : à quelle seconde elle est nommée ou montrée pour la première fois
+  _marque(s, e) {
+    const noms = String(Ecriture.notes?.['pub-marque'] || '').split(',').map(x => x.trim()).filter(Boolean);
+    const plat = t => String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const trouve = p => noms.length && [p.image || '', ...p.sons.map(x => x[2] || '')].some(t => noms.some(n => plat(t).includes(plat(n))));
+    const total = s.plans.reduce((t, p) => Math.max(t, p.debut + p.duree), 0) || 1;
+    const premier = s.plans.find(trouve);
+    const fois = s.plans.filter(trouve).length;
+    const tard = premier && premier.debut > total * 0.66;
+    return `<section class="an-carte">
+      <div class="an-entete"><h2 class="an-titre">La marque à l'écran</h2>
+        <label class="an-ligne"><span class="an-label">Marque, produit</span><input type="text" value="${esc(noms.join(', '))}" placeholder="Nom de la marque, du produit…" aria-label="Noms de la marque et du produit" onchange="Ecriture.note('pub-marque', this.value).then(() => Genres.rendre())"></label></div>
+      ${!noms.length ? '<p class="an-note">Écris le nom de la marque et du produit (séparés par des virgules) : l\'app cherche quand le spot les montre ou les dit.</p>'
+        : !premier ? '<p class="ec-orange">La marque n\'est ni montrée ni dite dans ce spot.</p>'
+        : `<div class="marque-frise" role="img" aria-label="Moments où la marque apparaît">${s.plans.map(p => `<span style="flex:${p.duree} 1 0" class="${trouve(p) ? 'oui' : ''}" title="${p.debut}–${p.debut + p.duree} s"></span>`).join('')}</div>
+          <p class="${tard ? 'ec-orange' : ''}">Première apparition à <strong>${premier.debut} s</strong> sur ${total} s, dans ${fois} plan(s) sur ${s.plans.length}.${tard ? ' C\'est tard : un spot qu\'on zappe ne l\'aura jamais montrée.' : premier.debut <= 3 ? ' Dès les premières secondes.' : ''}</p>`}
+    </section>`;
   },
 
   // ─── Jeu vidéo ───────────────────────────────────────────────────────────
@@ -328,6 +382,31 @@ const Genres = {
       const dans = c.lieux.filter((x, k) => prof[k] === col).length;
       return { x: 8 + (84 * col) / Math.max(1, colonnes - 1), y: (100 * parCol[col]) / (dans + 1) };
     });
+  },
+
+  // Les mots à traduire : tout le texte du jeu, par chapitre et par type, pour estimer une traduction
+  _aTraduire() {
+    const chapitres = this.donnees?.jeu?.chapitres || [];
+    if (!chapitres.length) return '';
+    const mots = t => (String(t || '').match(/[\p{L}\p{N}]+/gu) || []).length;
+    const parQui = {};
+    const lignes = chapitres.map(c => {
+      let dialogues = 0, choix = 0, descriptions = 0, objets = 0;
+      c.lieux.forEach(l => {
+        descriptions += mots(l.description) + mots(l.nom);
+        objets += (l.objets || []).reduce((t, o) => t + mots(typeof o === 'string' ? o : o?.nom), 0);
+        (l.dialogue || []).forEach(d => { const n = mots(d.texte); if (d.type === 'choix') choix += n; else { dialogues += n; parQui[d.qui] = (parQui[d.qui] || 0) + n; } });
+      });
+      return { n: c.n, titre: c.titre || '', dialogues, choix, descriptions, objets, total: dialogues + choix + descriptions + objets };
+    });
+    const total = lignes.reduce((t, l) => t + l.total, 0);
+    return `<section class="an-carte">
+      <div class="an-entete"><h2 class="an-titre">Mots à traduire</h2><span class="an-note">${total.toLocaleString('fr-FR')} mots dans tout le jeu</span></div>
+      <p class="an-note">Pour demander un devis de traduction ou prévoir l'enregistrement des voix : les mots de chaque chapitre, par type de texte, et ceux de chaque personnage. Les descriptions longues des lieux ne sont comptées qu'en partie (240 premiers caractères).</p>
+      <div class="an-table"><table><thead><tr><th scope="col">Chapitre</th><th scope="col">Dialogues</th><th scope="col">Choix</th><th scope="col">Lieux</th><th scope="col">Objets</th><th scope="col">Total</th></tr></thead>
+      <tbody>${lignes.map(l => `<tr><td>${esc(String(l.n))}${l.titre ? ` · ${esc(l.titre)}` : ''}</td><td>${l.dialogues}</td><td>${l.choix}</td><td>${l.descriptions}</td><td>${l.objets}</td><td><strong>${l.total}</strong></td></tr>`).join('')}</tbody></table></div>
+      <p class="an-note">Par personnage (voix à enregistrer) : ${Object.entries(parQui).sort((a, b) => b[1] - a[1]).map(([q, n]) => `${esc(q)} ${n}`).join(' · ') || '—'}</p>
+    </section>`;
   },
 
   _carte() {
@@ -413,6 +492,7 @@ const Genres = {
         <div class="jeu-dialogue">${lignes.join('')}</div>
         <p class="an-note">En orange : une branche qu'aucun joueur ne peut atteindre, parce que l'objet de sa condition ne s'obtient nulle part dans le chapitre.</p>
       </section>
+      ${this._aTraduire()}
     `;
   },
 

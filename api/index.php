@@ -56,6 +56,12 @@ require_once __DIR__ . '/cartes.php';
 require_once __DIR__ . '/secrets.php';
 require_once __DIR__ . '/calendrier.php';
 require_once __DIR__ . '/dramaturgie.php';
+require_once __DIR__ . '/fusion.php';
+require_once __DIR__ . '/montage.php';
+require_once __DIR__ . '/inconnu.php';
+require_once __DIR__ . '/style.php';
+require_once __DIR__ . '/parcours.php';
+require_once __DIR__ . '/creatif.php';
 
 $path = $_GET['path'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'];

@@ -188,3 +188,90 @@ function handleVoixEcarts(PDO $db): void {
     if (isset($res['error'])) http_response_code(404);
     echo json_encode($res, JSON_UNESCAPED_UNICODE);
 }
+
+// ─── Remplacer dans toute la série ───────────────────────────────────────
+
+const REMPLACER_MAX = 200;
+
+// Le motif cherché : texte littéral, casse exacte ou non, mot entier ou non
+function motifRemplacement(array $body): ?string {
+    $cherche = texteCorps($body['chercher'] ?? '');
+    if (trim($cherche) === '' || mb_strlen($cherche) > REMPLACER_MAX) return null;
+    $motif = preg_quote($cherche, '/');
+    if (!empty($body['mot'])) $motif = '(?<![\p{L}\p{N}])' . $motif . '(?![\p{L}\p{N}])';
+    return '/' . $motif . '/u' . (empty($body['casse']) ? 'i' : '');
+}
+
+// Sans casse exacte, un nom en capitales (en-tête de réplique) reste en capitales : MARC devient PAUL, Marc devient Paul
+function remplacementAdapte(string $trouve, string $par, bool $casse): string {
+    if ($casse || $trouve !== mb_strtoupper($trouve) || $trouve === mb_strtolower($trouve)) return $par;
+    return mb_strtoupper($par);
+}
+
+function remplacerDansSerie(PDO $db, array $body): array {
+    $motif = motifRemplacement($body);
+    if ($motif === null) return ['error' => 'Écris ce qu\'il faut chercher (200 caractères au plus).'];
+    $par = texteCorps($body['remplacer'] ?? '');
+    if (mb_strlen($par) > REMPLACER_MAX) return ['error' => 'Le remplacement fait 200 caractères au plus.'];
+    $casse = !empty($body['casse']);
+    $appliquer = ($body['action'] ?? '') === 'appliquer';
+    $choisis = array_flip(array_map('intval', is_array($body['ids'] ?? null) ? $body['ids'] : []));
+    $notes = $db->prepare('SELECT valeur FROM analyse_notes WHERE cle = ?');
+    $episodes = $db->query("SELECT e.id, e.numero_episode, e.titre, e.code, e.texte_episode, s.numero AS saison FROM episodes e JOIN saisons s ON s.id = e.saison_id ORDER BY s.numero, e.numero_episode, e.id")->fetchAll();
+    $resultat = [];
+    $total = 0;
+    foreach ($episodes as $e) {
+        $id = (int)$e['id'];
+        $script = (string)$e['texte_episode'];
+        $notes->execute(["brouillon:$id"]);
+        $brouillon = (string)$notes->fetchColumn();
+        $n = preg_match_all($motif, $script, $m, PREG_OFFSET_CAPTURE);
+        $nb = preg_match_all($motif, $brouillon);
+        if (!$n && !$nb) continue;
+        if (!$appliquer) {
+            // Quelques extraits pour juger avant de remplacer
+            $extraits = [];
+            foreach (array_slice($m[0] ?? [], 0, 3) as [$trouve, $pos]) {
+                $avant = substr($script, max(0, $pos - 60), min(60, $pos));
+                $extraits[] = ['avant' => mb_scrub(ltrim(preg_replace('/\s+/u', ' ', $avant))), 'trouve' => $trouve,
+                    'par' => remplacementAdapte($trouve, $par, $casse), 'apres' => mb_scrub(rtrim(preg_replace('/\s+/u', ' ', substr($script, $pos + strlen($trouve), 60))))];
+            }
+            $resultat[] = ['id' => $id, 'saison' => (int)$e['saison'], 'numero' => (int)$e['numero_episode'], 'titre' => (string)$e['titre'], 'script' => $n, 'brouillon' => $nb, 'extraits' => $extraits];
+            $total += $n + $nb;
+            continue;
+        }
+        if (!isset($choisis[$id])) continue;
+        $motifVersion = mb_substr('Avant le remplacement de « ' . texteCorps($body['chercher']) . ' » dans la série', 0, 200);
+        if ($n) {
+            versionsBrouillon($db, 'POST', ['episode_id' => $id, 'texte' => $script, 'motif' => $motifVersion]);
+            enregistrerScriptEpisode($db, $id, preg_replace_callback($motif, fn($x) => remplacementAdapte($x[0], $par, $casse), $script));
+        }
+        if ($nb) {
+            versionsBrouillon($db, 'POST', ['episode_id' => $id, 'texte' => $brouillon, 'motif' => $motifVersion . ' (brouillon)']);
+            ecrireNoteBrute($db, "brouillon:$id", preg_replace_callback($motif, fn($x) => remplacementAdapte($x[0], $par, $casse), $brouillon));
+        }
+        $resultat[] = ['id' => $id];
+        $total += $n + $nb;
+    }
+    return ['episodes' => $resultat, 'total' => $total];
+}
+
+function ecrireNoteBrute(PDO $db, string $cle, string $valeur): void {
+    $db->prepare('INSERT OR REPLACE INTO analyse_notes (cle, valeur) VALUES (?, ?)')->execute([$cle, $valeur]);
+}
+
+function handleRemplacerSerie(PDO $db, string $method, array $body): void {
+    if ($method !== 'POST') { http_response_code(405); echo json_encode(['error' => 'Méthode non autorisée']); return; }
+    $appliquer = ($body['action'] ?? '') === 'appliquer';
+    // Tout ou rien : un épisode qui échoue annule tous les remplacements (PDO sait qu'une transaction est ouverte)
+    if ($appliquer) $db->beginTransaction();
+    try {
+        $res = remplacerDansSerie($db, $body);
+        if ($appliquer) { if (isset($res['error'])) $db->rollBack(); else $db->commit(); }
+    } catch (Throwable $e) {
+        if ($appliquer && $db->inTransaction()) $db->rollBack();
+        throw $e;
+    }
+    if (isset($res['error'])) http_response_code(400);
+    echo json_encode($res, JSON_UNESCAPED_UNICODE);
+}

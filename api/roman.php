@@ -264,7 +264,12 @@ function handleExtraire(array $body): array {
     if ($nom === '' || $octets === false || $octets === '') return ['error' => 'Fichier vide ou illisible.'];
     if (strlen($octets) > FORMATS_TAILLE_MAX) return ['error' => 'Fichier trop lourd (40 Mo au plus).'];
     try {
-        return ['texte' => extraireTexte($nom, $octets)];
+        $sortie = ['texte' => extraireTexte($nom, $octets)];
+        // Un fichier Montage garde aussi ses rôles et leurs notes : proposés ensuite pour les fiches personnages
+        if (str_starts_with($octets, 'bplist00')) {
+            try { $roles = rolesMontage($octets); if ($roles) $sortie['roles'] = $roles; } catch (RuntimeException $e) { /* sans rôles */ }
+        }
+        return $sortie;
     } catch (RuntimeException $e) {
         return ['error' => $e->getMessage()];
     }

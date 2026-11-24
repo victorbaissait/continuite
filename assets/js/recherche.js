@@ -76,6 +76,7 @@ const Recherche = {
         ` : ''}
       </div>
     `;
+    if (typeof RemplacementSerie !== 'undefined') RemplacementSerie.monter(tab);
     const input = document.getElementById('recherche-input');
     if (input) {
       input.focus();
@@ -412,5 +413,100 @@ const Recherche = {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  },
+};
+
+
+// ─── Remplacer dans toute la série : aperçu épisode par épisode, puis remplacement de ceux qu'on coche ───
+// Chaque script modifié part d'abord dans ses Versions (Écriture → Brouillon → Versions) : on peut revenir en arrière.
+
+const RemplacementSerie = {
+  ouvert: false,
+  chercher: '',
+  remplacer: '',
+  casse: false,
+  mot: true,
+  apercu: null,
+  coches: new Set(),
+  occupe: false,
+
+  monter(tab) {
+    const section = document.createElement('section');
+    section.className = 'rs-zone';
+    section.id = 'rs-zone';
+    tab.appendChild(section);
+    this.rendre();
+  },
+
+  _code: e => `S${e.saison}E${String(e.numero).padStart(2, '0')}`,
+
+  rendre() {
+    const z = document.getElementById('rs-zone');
+    if (!z) return;
+    const a = this.apercu;
+    z.innerHTML = `
+      <details ${this.ouvert ? 'open' : ''} ontoggle="RemplacementSerie.ouvert = this.open">
+        <summary class="rs-titre">Remplacer dans toute la série</summary>
+        <p class="an-note">Pour renommer un personnage ou un lieu partout d'un coup. Rien n'est remplacé sans aperçu, et chaque script modifié est d'abord gardé dans ses Versions.</p>
+        <div class="rs-champs">
+          <input id="rs-chercher" type="text" maxlength="200" aria-label="Chercher" placeholder="Chercher…" value="${esc(this.chercher)}" oninput="RemplacementSerie.chercher = this.value; RemplacementSerie.apercu = null" onkeydown="if (event.key === 'Enter') RemplacementSerie.voir()">
+          <input id="rs-remplacer" type="text" maxlength="200" aria-label="Remplacer par" placeholder="Remplacer par…" value="${esc(this.remplacer)}" oninput="RemplacementSerie.remplacer = this.value; RemplacementSerie.apercu = null" onkeydown="if (event.key === 'Enter') RemplacementSerie.voir()">
+          <label class="interface-case"><input type="checkbox" ${this.mot ? 'checked' : ''} onchange="RemplacementSerie.mot = this.checked; RemplacementSerie.apercu = null"> Mot entier</label>
+          <label class="interface-case"><input type="checkbox" ${this.casse ? 'checked' : ''} onchange="RemplacementSerie.casse = this.checked; RemplacementSerie.apercu = null"> Casse exacte</label>
+          <button type="button" class="btn btn-secondary btn-sm" ${this.occupe ? 'disabled' : ''} onclick="RemplacementSerie.voir()">Aperçu</button>
+        </div>
+        ${a ? (a.episodes.length ? `
+          <div class="rs-entete">
+            <strong>${a.total} occurrence(s) dans ${a.episodes.length} épisode(s)</strong>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="RemplacementSerie.tout(true)">Tout cocher</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="RemplacementSerie.tout(false)">Tout décocher</button>
+            <button type="button" class="btn btn-primary btn-sm" ${this.coches.size && !this.occupe ? '' : 'disabled'} onclick="RemplacementSerie.appliquer()">Remplacer dans ${this.coches.size} épisode(s)</button>
+          </div>
+          <ul class="rs-liste">${a.episodes.map(e => `<li>
+            <label class="rs-ep"><input type="checkbox" ${this.coches.has(e.id) ? 'checked' : ''} onchange="RemplacementSerie.cocher(${e.id}, this.checked)">
+              <strong>${esc(this._code(e))}</strong> <span>${esc(e.titre || 'Sans titre')}</span>
+              <span class="an-note">${e.script ? `${e.script} dans le script` : ''}${e.script && e.brouillon ? ' · ' : ''}${e.brouillon ? `${e.brouillon} dans le brouillon` : ''}</span></label>
+            ${e.extraits.map(x => `<div class="rs-extrait">…${esc(x.avant)}<del>${esc(x.trouve)}</del><ins>${esc(x.par)}</ins>${esc(x.apres)}…</div>`).join('')}
+          </li>`).join('')}</ul>` : '<p class="an-note">Introuvable dans les scripts et les brouillons.</p>') : ''}
+      </details>`;
+  },
+
+  async voir() {
+    if (!this.chercher.trim()) { document.getElementById('rs-chercher')?.focus(); return; }
+    this.occupe = true;
+    this.rendre();
+    const r = await api.post('remplacer_serie', { action: 'apercu', chercher: this.chercher, remplacer: this.remplacer, casse: this.casse, mot: this.mot }).catch(() => ({ error: 'Le serveur ne répond pas.' }));
+    this.occupe = false;
+    if (r.error) { toast(r.error, 'error'); this.apercu = null; this.rendre(); return; }
+    this.apercu = r;
+    this.coches = new Set(r.episodes.map(e => e.id));
+    this.rendre();
+  },
+
+  cocher(id, oui) {
+    if (oui) this.coches.add(id); else this.coches.delete(id);
+    this.rendre();
+  },
+
+  tout(oui) {
+    this.coches = new Set(oui ? this.apercu.episodes.map(e => e.id) : []);
+    this.rendre();
+  },
+
+  async appliquer() {
+    const n = this.coches.size;
+    if (!n || !confirm(`Remplacer « ${this.chercher} » par « ${this.remplacer} » dans ${n} épisode(s) ? Chaque script est d'abord gardé dans ses Versions.`)) return;
+    this.occupe = true;
+    this.rendre();
+    toast('Remplacement et nouvelle analyse des scripts…', 'info');
+    const r = await api.post('remplacer_serie', { action: 'appliquer', chercher: this.chercher, remplacer: this.remplacer, casse: this.casse, mot: this.mot, ids: [...this.coches] }).catch(() => ({ error: 'Le serveur ne répond pas.' }));
+    this.occupe = false;
+    if (r.error) { toast(r.error, 'error'); this.rendre(); return; }
+    toast(`${r.total} remplacement(s) dans ${r.episodes.length} épisode(s). Les anciens textes sont dans les Versions.`);
+    this.apercu = null;
+    this.coches = new Set();
+    // Les autres onglets relisent les scripts modifiés, comme après un import
+    window.DataStore?.invalidateForMutation('upload');
+    this.rendre();
   },
 };

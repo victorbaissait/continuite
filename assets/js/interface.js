@@ -3,7 +3,7 @@
 const INTERFACE_DEFAUT = {
   titre: '', titreVisible: true, ordreMenu: [], masquesMenu: [], ordreAnalyse: [], masquesAnalyse: [],
   ordreEcritureSerie: [], masquesEcritureSerie: [], ordreEcritureEpisode: [], masquesEcritureEpisode: [],
-  theme: 'sombre', couleurs: { sombre: {}, clair: {} },
+  theme: 'sombre', suivreSysteme: false, couleurs: { sombre: {}, clair: {} },
   ordreEpisodes: [], masquesEpisodes: ['intrigue_C'], taillesEpisodes: {}, couleursEpisodes: { sombre: {}, clair: {} }, intrigues: [],
 };
 const INTERFACE_COULEURS_INTRIGUES = ['#f08fb0', '#c9b8ff', '#9be38f', '#ff9f9f', '#7fe0d4', '#d4a5ff', '#ffd27f', '#8fd3f4'];
@@ -16,7 +16,9 @@ const DALTONISME = {
   tritanopie: { nom: 'Tritanopie (bleu)', simulation: [[1.255528, -0.076749, -0.178779], [-0.078411, 0.930809, 0.147602], [0.004733, 0.691367, 0.3039]], report: [[1, 0, 0.7], [0, 1, 0.7], [0, 0, 0]] },
 };
 const POLICES_PROPOSEES = ['OpenDyslexic', 'Atkinson Hyperlegible', 'Arial', 'Verdana', 'Helvetica', 'Georgia', 'Times New Roman', 'Trebuchet MS', 'Courier New'];
-const ACCESSIBILITE_DEFAUT = { daltonisme: '', intensite: 100, zoom: 100, contraste: false, espacement: false, animations: false, focus: false, cibles: false, soulignes: false, police: '', policeTitres: '' };
+const ACCESSIBILITE_DEFAUT = { daltonisme: '', intensite: 100, zoom: 100, contraste: false, espacement: false, animations: false, focus: false, cibles: false, soulignes: false, police: '', policeTitres: '', edPolice: '', edTaille: 13, edInterligne: 1.6, edLargeur: '' };
+// La largeur du texte dans le brouillon (le reste de la page ne bouge pas)
+const EDITEUR_LARGEURS = [['', 'Toute la colonne'], ['80ch', 'Large'], ['68ch', 'Moyenne'], ['58ch', 'Étroite (comme une page)']];
 
 // [variable, libellé, valeur en sombre, valeur en clair]
 const INTERFACE_COULEURS = [
@@ -96,8 +98,26 @@ const Interface = {
     return (r * 299 + g * 587 + b * 114) / 1000 > 140 ? '#0a0a0a' : '#ffffff';
   },
 
+  // « Système » : le thème suit celui de macOS, Windows ou Linux, et bascule avec lui
+  _themeSysteme() {
+    return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'clair' : 'sombre';
+  },
+
+  _ecouterSysteme() {
+    if (this._ecouteSysteme || !window.matchMedia) return;
+    this._ecouteSysteme = true;
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+      if (!this.config.suivreSysteme) return;
+      this.config.theme = this._themeSysteme();
+      this.appliquerTheme();
+      if (document.getElementById('interface-panel')) this.rendrePanel();
+    });
+  },
+
   appliquerTheme() {
     const racine = document.documentElement;
+    if (this.config.suivreSysteme) this.config.theme = this._themeSysteme();
+    this._ecouterSysteme();
     const { theme, couleurs } = this.config;
     const choix = couleurs[theme] || {};
     racine.dataset.theme = theme;
@@ -154,7 +174,15 @@ const Interface = {
     racine.classList.toggle('a11y-police-titres', Boolean(a.policeTitres));
     if (a.police) racine.style.setProperty('--police-choisie', pile(a.police));
     if (a.policeTitres) racine.style.setProperty('--police-titres', pile(a.policeTitres));
-    if ([a.police, a.policeTitres].some(p => ['Atkinson Hyperlegible', 'OpenDyslexic'].includes(p))) this._chargerPolicesWeb();
+    // L'éditeur du brouillon : sa police, sa taille, son interligne et la largeur du texte
+    const taille = Math.min(24, Math.max(11, Number(a.edTaille) || 13));
+    const interligne = Math.min(2.4, Math.max(1.1, Number(a.edInterligne) || 1.6));
+    racine.style.setProperty('--ed-police', a.edPolice ? pile(a.edPolice) : 'var(--font-mono)');
+    racine.style.setProperty('--ed-taille', `${taille}px`);
+    racine.style.setProperty('--ed-interligne', String(interligne));
+    if (EDITEUR_LARGEURS.some(([k]) => k && k === a.edLargeur)) racine.style.setProperty('--ed-largeur', a.edLargeur);
+    else racine.style.removeProperty('--ed-largeur');
+    if ([a.police, a.policeTitres, a.edPolice].some(p => ['Atkinson Hyperlegible', 'OpenDyslexic'].includes(p))) this._chargerPolicesWeb();
   },
 
   _pilePolice(nom) {
@@ -301,6 +329,19 @@ const Interface = {
           <span class="an-note">${this.policesOrdinateur ? `${this.policesOrdinateur.length} polices ajoutées aux deux listes.` : 'OpenDyslexic est conçue pour la dyslexie, Atkinson Hyperlegible pour la basse vision. Tu peux aussi taper le nom d\'une police installée.'}</span>
         </div>
       </div>
+      <div class="a11y-groupe">
+        <div class="settings-duration-title">L'éditeur du brouillon</div>
+        <div class="a11y-polices">${policeSelect('edPolice', 'Police du brouillon')}</div>
+        <div class="interface-ligne">
+          <label class="interface-case" for="ed-taille">Taille <strong>${Number(a.edTaille) || 13} px</strong></label>
+          <input id="ed-taille" type="range" min="11" max="24" step="1" value="${Number(a.edTaille) || 13}" onchange="Interface.setAccessibilite('edTaille', Number(this.value))">
+          <label class="interface-case" for="ed-interligne">Interligne <strong>${Number(a.edInterligne) || 1.6}</strong></label>
+          <input id="ed-interligne" type="range" min="1.1" max="2.4" step="0.1" value="${Number(a.edInterligne) || 1.6}" onchange="Interface.setAccessibilite('edInterligne', Number(this.value))">
+          <label class="interface-case" for="ed-largeur">Largeur du texte</label>
+          <select id="ed-largeur" onchange="Interface.setAccessibilite('edLargeur', this.value)">${EDITEUR_LARGEURS.map(([k, l]) => `<option value="${k}" ${a.edLargeur === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        </div>
+        <p class="an-note">Seulement pour écrire : les PDF et les exports gardent leur propre mise en page.</p>
+      </div>
       <button type="button" class="btn btn-secondary btn-sm" onclick="Interface.reinitialiserAccessibilite()">↺ Réinitialiser l'accessibilité et la typo</button>
     `;
   },
@@ -370,7 +411,10 @@ const Interface = {
       <div class="interface-titre">
         <div class="settings-duration-title">Thème</div>
         <div class="interface-ligne">
-          ${[['sombre', 'Sombre'], ['clair', 'Clair']].map(([k, l]) => `<button type="button" class="an-choix ${c.theme === k ? 'actif' : ''}" aria-pressed="${c.theme === k}" onclick="Interface.setTheme('${k}')">${l}</button>`).join('')}
+          ${[['sombre', 'Sombre'], ['clair', 'Clair'], ['systeme', 'Système']].map(([k, l]) => {
+            const actif = k === 'systeme' ? Boolean(c.suivreSysteme) : !c.suivreSysteme && c.theme === k;
+            return `<button type="button" class="an-choix ${actif ? 'actif' : ''}" aria-pressed="${actif}" onclick="Interface.setTheme('${k}')">${l}</button>`;
+          }).join('')}
         </div>
         <div class="interface-couleurs">
           ${INTERFACE_COULEURS.map(ligne => `
@@ -421,7 +465,8 @@ const Interface = {
   },
 
   setTheme(theme) {
-    this.config.theme = theme;
+    this.config.suivreSysteme = theme === 'systeme';
+    this.config.theme = theme === 'systeme' ? this._themeSysteme() : theme;
     this.appliquer();
     this.rendrePanel();
     return this.enregistrer();

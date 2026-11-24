@@ -6,14 +6,49 @@ const Personnages = {
   activeDetail: null,
 
   async init() {
-    this.tous = await DataStore.get('personnages');
+    const [tous, photos] = await Promise.all([DataStore.get('personnages'), api.get(`analyse_notes&cle=photos-persos`).catch(() => null)]);
+    this.tous = tous;
+    this.photos = objetNote(photos?.valeur);
     this.render();
+  },
+
+  // ─── La photo de casting : une image de référence pour se représenter le personnage (gardée dans le projet) ───
+
+  photos: {},
+
+  _avatar(p, taille = '') {
+    const src = this.photos?.[p.id];
+    return src && /^data:image\/(jpeg|png|webp);base64,/.test(src) ? `<img class="perso-photo ${taille}" src="${src}" alt="">` : '';
+  },
+
+  async choisirPhoto(id, fichier) {
+    if (!fichier || !/^image\/(png|jpeg|webp)$/.test(fichier.type)) return;
+    const img = await createImageBitmap(fichier).catch(() => null);
+    if (!img) { toast('Image illisible.', 'error'); return; }
+    // Réduite à 240 px : assez pour la reconnaître, assez léger pour le projet
+    const r = Math.min(1, 240 / Math.max(img.width, img.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width * r);
+    c.height = Math.round(img.height * r);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    this.photos = { ...this.photos, [id]: c.toDataURL('image/jpeg', 0.82) };
+    await api.put('analyse_notes', { cle: 'photos-persos', valeur: JSON.stringify(this.photos) });
+    this.render();
+    await this.openDetail(id);
+  },
+
+  async retirerPhoto(id) {
+    const { [id]: _, ...reste } = this.photos;
+    this.photos = reste;
+    await api.put('analyse_notes', { cle: 'photos-persos', valeur: Object.keys(reste).length ? JSON.stringify(reste) : '' });
+    this.render();
+    await this.openDetail(id);
   },
 
   vue: 'fiches',
 
   _vues() {
-    return `<div class="an-ligne vues-onglet" role="group" aria-label="Vue">${[['fiches', 'Fiches'], ['relations', 'Relations'], ['secrets', 'Qui sait quoi'], ['etats', 'États']].map(([k, l]) => `<button type="button" class="an-choix ${this.vue === k ? 'actif' : ''}" aria-pressed="${this.vue === k}" onclick="Personnages.choisirVue('${k}')">${l}</button>`).join('')}</div>`;
+    return `<div class="an-ligne vues-onglet" role="group" aria-label="Vue">${[['fiches', 'Fiches'], ['relations', 'Relations'], ['secrets', 'Qui sait quoi'], ['etats', 'États'], ['parcours', 'Parcours'], ['aveugle', 'Qui parle ?']].map(([k, l]) => `<button type="button" class="an-choix ${this.vue === k ? 'actif' : ''}" aria-pressed="${this.vue === k}" onclick="Personnages.choisirVue('${k}')">${l}</button>`).join('')}</div>`;
   },
 
   choisirVue(v) {
@@ -31,6 +66,16 @@ const Personnages = {
     if (this.vue === 'etats') {
       tab.innerHTML = `<div class="section-header"><div class="section-title">◎ Personnages · états</div><div class="section-actions">${this._vues()}</div></div><div class="vue-monde" id="etats-vue"></div>`;
       Etats.monter(document.getElementById('etats-vue'));
+      return;
+    }
+    if (this.vue === 'aveugle') {
+      tab.innerHTML = `<div class="section-header"><div class="section-title">◎ Personnages · qui parle ?</div><div class="section-actions">${this._vues()}</div></div><div class="vue-monde" id="aveugle-vue"></div>`;
+      Aveugle.monter(document.getElementById('aveugle-vue'));
+      return;
+    }
+    if (this.vue === 'parcours') {
+      tab.innerHTML = `<div class="section-header"><div class="section-title">◎ Personnages · parcours</div><div class="section-actions">${this._vues()}</div></div><div class="vue-monde" id="parcours-vue"></div>`;
+      Parcours.monter(document.getElementById('parcours-vue'));
       return;
     }
     if (this.vue === 'secrets') {
@@ -94,7 +139,7 @@ const Personnages = {
         ${p.est_principal == 2 ? '<div class="principal-badge">Principal</div>' : p.est_principal == 1 ? `<div class="principal-badge" style="background:var(--accent3);color:#000">Récurrent</div>` : ''}
         <div class="personnage-card-top">
           <div class="personnage-avatar" style="background:${p.couleur_identite};border-color:${p.couleur_identite}">
-            ${this._escape(p.prenom[0].toUpperCase())}
+            ${this._avatar(p) || this._escape(p.prenom[0].toUpperCase())}
           </div>
           <div class="personnage-card-info">
             <div class="personnage-prenom">${this._escape(p.prenom)} ${this._escape(p.nom || '')}</div>
@@ -248,8 +293,9 @@ const Personnages = {
     modal.open(`
       <div style="display:flex;align-items:center;gap:20px;margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--border)">
         <div style="width:72px;height:72px;border-radius:50%;background:${p.couleur_identite};display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-size:28px;font-weight:800;color:#000;border:3px solid ${p.couleur_identite};flex-shrink:0">
-          ${this._escape(p.prenom[0].toUpperCase())}
+          ${this._avatar(p, 'grande') || this._escape(p.prenom[0].toUpperCase())}
         </div>
+        <div class="perso-photo-actions"><label class="ec-lien sb-fichier">${this.photos?.[p.id] ? 'changer la photo' : 'photo de casting'}<input type="file" accept="image/png,image/jpeg,image/webp" onchange="Personnages.choisirPhoto(${p.id}, this.files[0])"></label>${this.photos?.[p.id] ? `<button type="button" class="ec-lien" onclick="Personnages.retirerPhoto(${p.id})">retirer</button>` : ''}</div>
         <div>
           <div class="modal-title" style="border:none;padding:0;margin:0">${this._escape(p.prenom)} ${this._escape(p.nom || '')}</div>
           <div style="font-size:12px;color:var(--text3);margin-top:4px">
@@ -974,3 +1020,146 @@ const Personnages = {
     await this.init();
   }
 };
+
+// ─── Le parcours d'un personnage : tout ce qui lui arrive, épisode par épisode, et ce qui ne colle pas ───
+const Parcours = {
+  id: null,
+  d: null,
+  tout: false,
+
+  async monter(slot) {
+    this.slot = slot;
+    const persos = (Personnages.tous || []).slice().sort((a, b) => (b.est_principal || 0) - (a.est_principal || 0) || String(a.prenom).localeCompare(String(b.prenom), 'fr'));
+    if (!this.id || !persos.some(p => Number(p.id) === Number(this.id))) this.id = persos[0]?.id || null;
+    slot.innerHTML = `<div class="an-ligne"><label class="an-label" for="parcours-qui">Personnage</label>
+      <select id="parcours-qui" onchange="Parcours.choisir(this.value)">${persos.map(p => `<option value="${p.id}" ${Number(p.id) === Number(this.id) ? 'selected' : ''}>${esc([p.prenom, p.nom].filter(Boolean).join(' '))}</option>`).join('')}</select>
+      <label class="interface-case"><input type="checkbox" ${this.tout ? 'checked' : ''} onchange="Parcours.tout = this.checked; Parcours.rendre()"> Montrer aussi les épisodes où il ne fait que passer</label></div>
+      <div id="parcours-corps"><p class="an-note">${this.id ? 'Lecture des épisodes…' : 'Aucun personnage pour l\'instant.'}</p></div>`;
+    if (this.id) await this.choisir(this.id);
+  },
+
+  async choisir(id) {
+    this.id = Number(id);
+    this.d = await api.get(`parcours&id=${this.id}`);
+    this.rendre();
+  },
+
+  rendre() {
+    const slot = document.getElementById('parcours-corps');
+    const d = this.d;
+    if (!slot || !d) return;
+    if (d.error) { slot.innerHTML = `<p class="an-note">${esc(d.error)}</p>`; return; }
+    const p = d.personnage;
+    const alertesParEp = new Map();
+    d.alertes.forEach(a => alertesParEp.set(a.ep, [...(alertesParEp.get(a.ep) || []), a]));
+    const marquant = e => e.moments.length || e.debut.length || e.fin.length || e.ages.length || alertesParEp.has(e.id);
+    const liste = d.episodes.filter(e => this.tout || marquant(e) || e.code === d.premier || e.code === d.dernier);
+    const presents = d.episodes.filter(e => e.present).length;
+    slot.innerHTML = `
+      ${Analyse._kpis([
+        { l: 'Présent dans', v: Analyse._fr(presents), s: 'épisode(s)' },
+        { l: 'Première fois', v: d.premier || '—' },
+        { l: 'Dernière fois', v: d.dernier || '—' },
+        { l: 'Plus longue absence', v: d.absence ? d.absence.n : '—', s: d.absence ? `épisodes, entre ${d.absence.de} et ${d.absence.a}` : '' },
+        { l: 'Âge sur la fiche', v: p.age ?? '—', s: p.naissance ? `né le ${new Date(p.naissance + 'T12:00:00').toLocaleDateString('fr-FR')}` : '' },
+      ])}
+      ${(d.absents || []).length ? `<section class="an-carte"><div class="an-entete"><h2 class="an-titre">Absent des grandes scènes</h2><span class="an-note">${d.absents.length} scène(s)</span></div>
+        <p class="an-note">Un repas, une fête, une réunion, ou au moins quatre personnages qui parlent, sans ${esc(p.nom)}, et sans que le texte dise qu'il manque. Souvent voulu ; parfois un oubli que le spectateur remarquera.</p>
+        <ul class="ec-liste">${d.absents.map(a => `<li><span><strong>${esc(a.code)}</strong> · <span class="vo-brut">${esc(a.slug)}</span></span><span class="an-note">${a.parlent} personnages${a.groupe ? ' · scène de groupe' : ''}</span></li>`).join('')}</ul></section>` : ''}
+      ${d.alertes.length ? `<section class="an-carte"><h2 class="an-titre">À vérifier</h2><ul class="ec-liste">${d.alertes.map(a => `<li class="ec-orange"><span><strong>${esc(a.code)}</strong> · ${esc(a.texte)}</span></li>`).join('')}</ul></section>` : ''}
+      <section class="an-carte">
+        <h2 class="an-titre">Épisode par épisode</h2>
+        <p class="an-note">Ses répliques, ses moments décisifs (fiche), ses états (Personnages → États) et l'âge qu'il dit avoir ou qu'on lui donne dans les dialogues${p.naissance ? ', comparé à sa date de naissance et à la date de l\'épisode' : ''}.${this.tout ? '' : ' Seuls les épisodes où il se passe quelque chose sont montrés.'}</p>
+        ${liste.length ? `<ol class="parcours-liste">${liste.map(e => `<li class="${alertesParEp.has(e.id) ? 'alerte' : ''}">
+          <span class="parcours-code">${esc(e.code)}</span>
+          <div><strong>${esc(e.titre || 'Sans titre')}</strong>${e.date ? ` <span class="an-note">${esc(new Date(e.date + 'T12:00:00').toLocaleDateString('fr-FR'))}</span>` : ''}
+            <span class="an-note">${e.present ? `${e.repliques} réplique(s)` : 'absent'}${e.code === d.premier ? ' · première apparition' : ''}${e.code === d.dernier ? ' · dernière apparition' : ''}</span>
+            ${e.moments.map(m => `<p>◆ ${esc(m.type)} : ${esc(m.titre || m.description)}</p>`).join('')}
+            ${e.debut.map(t => `<p>▶ commence : ${esc(t)}</p>`).join('')}${e.fin.map(t => `<p>■ prend fin : ${esc(t)}</p>`).join('')}
+            ${e.ages.map(a => `<p>${a.qui === 'lui' ? 'Dit avoir' : 'On lui donne'} <strong>${a.age} ans</strong>${e.age_attendu !== null ? ` (attendu : ${e.age_attendu})` : ''} · <span class="an-note">« ${esc(a.extrait)} »</span></p>`).join('')}
+          </div></li>`).join('')}</ol>` : '<p class="an-note">Ce personnage n\'apparaît dans aucun script pour l\'instant.</p>'}
+      </section>`;
+  },
+};
+
+// ─── Le test de l'aveugle : une réplique sans son nom, à toi de dire qui parle ───
+// Si tu confonds souvent deux personnages, leurs voix se ressemblent trop. C'est toi qui devines : l'app ne fait que compter.
+const Aveugle = {
+  d: null,
+  i: 0,
+  reponses: [],
+  choisis: [],
+
+  async monter(slot) {
+    this.slot = slot;
+    slot.innerHTML = '<p class="an-note">Les répliques arrivent…</p>';
+    this.d = await api.get(`aveugle&n=15${this.choisis.length ? `&persos=${encodeURIComponent(this.choisis.join(','))}` : ''}`);
+    this.i = 0;
+    this.reponses = [];
+    this.rendre();
+  },
+
+  rendre() {
+    const d = this.d;
+    if (!this.slot || !d) return;
+    const choix = d.disponibles.length > 2 ? `<details class="aveugle-choix"><summary class="an-label">Choisir les personnages (${d.personnages.length})</summary>
+      <div class="an-ligne">${d.disponibles.map(p => `<label class="interface-case"><input type="checkbox" value="${esc(p.id)}" ${d.personnages.some(x => x.id === p.id) ? 'checked' : ''}> ${esc(p.nom)}</label>`).join('')}</div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Aveugle.choisis = [...this.closest('details').querySelectorAll('input:checked')].map(c => c.value).slice(0, 6); Aveugle.monter(Aveugle.slot)">Rejouer avec ceux-là</button></details>` : '';
+    if (d.personnages.length < 2) { this.slot.innerHTML = '<p class="an-note">Il faut au moins deux personnages avec dix répliques assez longues pour jouer.</p>'; return; }
+    const q = d.questions[this.i];
+    if (!q) { this.slot.innerHTML = this._bilan() + choix; return; }
+    const derniere = this.reponses[this.reponses.length - 1];
+    this.slot.innerHTML = `
+      <section class="an-carte aveugle">
+        <div class="an-entete"><h2 class="an-titre">Qui dit ça ?</h2><span class="an-note">${this.i + 1} / ${d.questions.length} · ${this.reponses.filter(r => r.bon).length} bonne(s) réponse(s)</span></div>
+        <blockquote class="aveugle-replique vo-brut">${esc(q.texte)}</blockquote>
+        <div class="aveugle-boutons">${d.personnages.map(p => `<button type="button" class="btn btn-secondary" onclick="Aveugle.repondre('${esc(p.id)}')">${esc(p.nom)}</button>`).join('')}</div>
+        ${derniere ? `<p class="an-note ${derniere.bon ? '' : 'ec-orange'}">${derniere.bon ? 'Oui' : `Non : c'était ${esc(this._nom(derniere.qui))}`} (${esc(derniere.ep)}).</p>` : '<p class="an-note">Tape 1, 2, 3… pour répondre au clavier.</p>'}
+      </section>${choix}`;
+  },
+
+  _nom(id) {
+    return (this.d.personnages.find(p => p.id === id) || {}).nom || '?';
+  },
+
+  repondre(id) {
+    const q = this.d.questions[this.i];
+    if (!q) return;
+    this.reponses.push({ qui: q.qui, dit: id, bon: q.qui === id, ep: q.ep });
+    this.i++;
+    if (!this.d.questions[this.i]) this._garder();
+    this.rendre();
+  },
+
+  _garder() {
+    const bon = this.reponses.filter(r => r.bon).length;
+    try {
+      const avant = JSON.parse(Ecriture.notes?.aveugle || '[]');
+      const liste = [...(Array.isArray(avant) ? avant : []), { date: new Date().toISOString().slice(0, 10), score: bon, sur: this.reponses.length }].slice(-30);
+      api.put('analyse_notes', { cle: 'aveugle', valeur: JSON.stringify(liste) }).catch(() => {});
+      if (Ecriture.notes) Ecriture.notes.aveugle = JSON.stringify(liste);
+    } catch (e) { /* l'historique n'est qu'un plus */ }
+  },
+
+  _bilan() {
+    const bon = this.reponses.filter(r => r.bon).length;
+    const confusions = new Map();
+    this.reponses.filter(r => !r.bon).forEach(r => { const cle = [r.qui, r.dit].sort().join('|'); confusions.set(cle, (confusions.get(cle) || 0) + 1); });
+    const liste = [...confusions.entries()].sort((a, b) => b[1] - a[1]);
+    let historique = [];
+    try { historique = JSON.parse(Ecriture.notes?.aveugle || '[]'); } catch (e) { /* rien */ }
+    return `<section class="an-carte">
+      <h2 class="an-titre">${bon} sur ${this.reponses.length}</h2>
+      <p class="an-note">${bon === this.reponses.length ? 'Tu reconnais chaque voix : elles sont bien distinctes.' : bon >= this.reponses.length * 0.7 ? 'Les voix se reconnaissent bien, avec quelques hésitations.' : 'Plusieurs voix se ressemblent : relis ces personnages côte à côte (Analyse → Voix).'}</p>
+      ${liste.length ? `<h3 class="an-label">Les voix que tu as confondues</h3><ul class="ec-liste">${liste.map(([cle, n]) => { const [a, b] = cle.split('|'); return `<li><span>${esc(this._nom(a))} et ${esc(this._nom(b))}</span><span class="an-note">${n} fois</span></li>`; }).join('')}</ul>` : ''}
+      ${historique.length > 1 ? `<p class="an-note">Tes dernières parties : ${historique.slice(-6).map(h => `${h.score}/${h.sur}`).join(' · ')}</p>` : ''}
+      <button type="button" class="btn btn-primary btn-sm" onclick="Aveugle.monter(Aveugle.slot)">Rejouer</button>
+    </section>`;
+  },
+};
+
+document.addEventListener('keydown', e => {
+  if (!document.querySelector('.aveugle') || e.metaKey || e.ctrlKey || e.altKey || /input|textarea|select/i.test(e.target.tagName)) return;
+  const n = Number(e.key);
+  if (n >= 1 && n <= (Aveugle.d?.personnages.length || 0)) { e.preventDefault(); Aveugle.repondre(Aveugle.d.personnages[n - 1].id); }
+});

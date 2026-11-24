@@ -42,7 +42,7 @@ function mettreAJourSchema(PDO $pdo, string $chemin): void {
         preparerSchema($pdo);
         migrateSchema($pdo);
         // Les structures que les routes ajoutaient elles-mêmes, à chaque requête : ici une seule fois
-        foreach (['ensureEpisodesSchema', 'ensureFriseSchema', 'ensurePersonnageEditorialSchema', 'ensureBibleNotes', 'ensurePromessesNarratives', 'ensureAnalyseNotes'] as $f) {
+        foreach (['ensureEpisodesSchema', 'ensureFriseSchema', 'ensurePersonnageEditorialSchema', 'ensureBibleNotes', 'ensurePromessesNarratives', 'ensureAnalyseNotes', 'ensureStatsTablesBackfilled'] as $f) {
             if (function_exists($f)) $f($pdo);
         }
         $pdo->exec('CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)');
@@ -58,6 +58,10 @@ function migrateSchema(PDO $pdo): void {
     if (!in_array('est_principal', $cols))  $pdo->exec("ALTER TABLE lieux ADD COLUMN est_principal INTEGER DEFAULT 0");
     if (!in_array('nom_affichage', $cols))  $pdo->exec("ALTER TABLE lieux ADD COLUMN nom_affichage TEXT");
     $colsE = array_column($pdo->query("PRAGMA table_info(episodes)")->fetchAll(PDO::FETCH_ASSOC), 'name');
+    // Colonnes ajoutées à la main sur les premières bases : une base neuve les reçoit aussi
+    foreach (['titre_fr' => 'TEXT', 'resume' => 'TEXT'] as $colonne => $type) {
+        if (!in_array($colonne, $colsE)) $pdo->exec("ALTER TABLE episodes ADD COLUMN $colonne $type");
+    }
     foreach (['etat_episode' => 'TEXT DEFAULT NULL', 'date_debut_ecriture' => 'TEXT DEFAULT NULL', 'date_debut_qual' => "TEXT DEFAULT 'exacte'", 'date_fin_ecriture' => 'TEXT DEFAULT NULL', 'date_fin_qual' => "TEXT DEFAULT 'exacte'"] as $colonne => $type) {
         if (!in_array($colonne, $colsE)) $pdo->exec("ALTER TABLE episodes ADD COLUMN $colonne $type");
     }
@@ -67,6 +71,7 @@ function migrateSchema(PDO $pdo): void {
     // personnages : nom_affichage
     $colsP = array_column($pdo->query("PRAGMA table_info(personnages)")->fetchAll(PDO::FETCH_ASSOC), 'name');
     if (!in_array('nom_affichage', $colsP)) $pdo->exec("ALTER TABLE personnages ADD COLUMN nom_affichage TEXT");
+    if (!in_array('est_recurrent', $colsP)) $pdo->exec("ALTER TABLE personnages ADD COLUMN est_recurrent INTEGER DEFAULT 0");
 
     ensureStatsTables($pdo);
     ensureLecteursTables($pdo);
@@ -136,6 +141,9 @@ function ensureLecteursTables(PDO $pdo): void {
         $pdo->exec("UPDATE lecteurs SET priorite = CASE WHEN est_prioritaire = 1 THEN 'Prioritaire' ELSE 'À voir' END");
     }
     if (!in_array('ordre', $cols)) $pdo->exec("ALTER TABLE lecteurs ADD COLUMN ordre INTEGER NOT NULL DEFAULT 0");
+    // L'empreinte du script envoyé : pour savoir s'il a changé depuis que le lecteur l'a reçu
+    $colsEp = array_column($pdo->query("PRAGMA table_info(lecteur_episodes)")->fetchAll(PDO::FETCH_ASSOC), 'name');
+    if (!in_array('empreinte', $colsEp)) $pdo->exec("ALTER TABLE lecteur_episodes ADD COLUMN empreinte TEXT");
 }
 
 function ensureStatsTables(PDO $pdo): void {
@@ -217,7 +225,7 @@ function ensureIndexes(PDO $pdo): void {
         'CREATE INDEX IF NOT EXISTS idx_personnage_moments_personnage ON personnage_moments_decisifs(personnage_id, episode_id)',
         'CREATE INDEX IF NOT EXISTS idx_personnage_signatures_personnage ON personnage_signatures(personnage_id, episode_id)',
         'CREATE INDEX IF NOT EXISTS idx_bible_notes_saison ON bible_notes(saison_id)',
-        'CREATE INDEX IF NOT EXISTS idx_promesses_lance ON promesses_narratives(episode_lance_id)',
+        'CREATE INDEX IF NOT EXISTS idx_promesses_source ON promesses_narratives(episode_source_id)',
         'CREATE INDEX IF NOT EXISTS idx_promesse_episodes_promesse ON promesse_episodes(promesse_id)',
         'CREATE INDEX IF NOT EXISTS idx_promesse_episodes_episode ON promesse_episodes(episode_id)',
         'CREATE INDEX IF NOT EXISTS idx_journal_created ON journal(created_at)',

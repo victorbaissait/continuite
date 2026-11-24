@@ -27,7 +27,16 @@ function importerScript(PDO $db, array $body): array {
     $st = $db->prepare('SELECT id, texte_episode FROM episodes WHERE saison_id = ? AND numero_episode = ?');
     $st->execute([$saisonId, $numero]);
     $episode = $st->fetch();
-    if ($episode && trim((string)$episode['texte_episode']) !== '') return ['statut' => 'existe', 'id' => (int)$episode['id']];
+    if ($episode && trim((string)$episode['texte_episode']) !== '') {
+        // Le dossier surveillé reprend un script modifié : l'ancien texte part dans les Versions
+        if (empty($body['remplacer'])) return ['statut' => 'existe', 'id' => (int)$episode['id']];
+        if (trim((string)$episode['texte_episode']) === trim($texte)) return ['statut' => 'identique', 'id' => (int)$episode['id']];
+        versionsBrouillon($db, 'POST', ['episode_id' => (int)$episode['id'], 'texte' => (string)$episode['texte_episode'], 'motif' => mb_substr(texteCorps($body['motif'] ?? '') ?: 'Avant la reprise du fichier', 0, 200)]);
+        ob_start();
+        handleUpload($db, ['episode_id' => (int)$episode['id'], 'texte' => $texte]);
+        $stats = json_decode((string)ob_get_clean(), true);
+        return ['statut' => 'remplace', 'id' => (int)$episode['id'], 'repliques' => (int)($stats['nb_repliques_total'] ?? 0)];
+    }
     $id = $episode ? (int)$episode['id'] : createEpisode($db, ['saison_id' => (int)$saisonId, 'numero_episode' => $numero, 'titre' => texteCorps($body['titre'] ?? '')]);
 
     ob_start();

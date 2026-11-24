@@ -97,6 +97,8 @@ const Projets = {
     const panel = document.getElementById('projets-panel');
     if (!panel) return;
     this.corbeille = await api.get('projets/corbeille');
+    this.modelesPerso = await api.get('projets/modeles').catch(() => []);
+    if (!Array.isArray(this.modelesPerso)) this.modelesPerso = [];
     panel.innerHTML = `
       <div class="projets-config">
         <div class="projets-colonne">
@@ -108,8 +110,10 @@ const Projets = {
                   ${p.slug === PROJET ? '' : `<button type="button" class="ec-lien" onclick="Projets.changer('${esc(p.slug)}')">Ouvrir</button>`}
                   <button type="button" class="ec-lien" onclick="Projets.renommer('${esc(p.slug)}')">Renommer</button>
                   <button type="button" class="ec-lien" onclick="Projets.dupliquer('${esc(p.slug)}')">Dupliquer</button>
+                  <button type="button" class="ec-lien" onclick="Projets.enregistrerModele('${esc(p.slug)}')">Enregistrer comme modèle</button>
                   ${p.type === 'roman' ? `<button type="button" class="ec-lien vo-brut" onclick="Projets.changerLivres('${esc(p.slug)}')">${p.livres === 'plusieurs' ? 'Passer en roman seul' : 'Passer en série de romans'}</button>` : ''}
                   ${p.type === 'roman' && p.scripts ? `<button type="button" class="ec-lien vo-brut" onclick="Projets.adapter('${esc(p.slug)}')">Adapter en scénario</button>` : ''}
+                  ${p.type === 'roman' && p.scripts > 1 ? `<button type="button" class="ec-lien vo-brut" onclick="Projets.decouper('${esc(p.slug)}')">Découper en épisodes</button>` : ''}
                   ${p.type === 'bd' ? `<button type="button" class="ec-lien vo-brut" onclick="Projets.changerLivres('${esc(p.slug)}')">${p.livres === 'plusieurs' ? 'Passer en album seul' : 'Passer en série d\'albums'}</button>` : ''}
                   <button type="button" class="ec-lien vo-brut" onclick="Projets.basculerStoryboard('${esc(p.slug)}')">${p.storyboard ? 'Retirer le storyboard' : 'Ajouter le storyboard'}</button>
                   ${p.slug && p.slug !== PROJET ? `<button type="button" class="ec-lien" onclick="Projets.retirer('${esc(p.slug)}')">Retirer</button>` : ''}
@@ -138,6 +142,8 @@ const Projets = {
             <label class="projets-type"><input type="radio" name="projet-livres" value="plusieurs"><strong>Une série de romans</strong><small>Des livres, puis des chapitres</small></label>
           </div>
           <div id="projet-forme" class="projets-types vo-brut" role="radiogroup" aria-label="Forme" hidden></div>
+          <p class="an-label" id="projet-modele-label">Pour commencer</p>
+          <div id="projet-modele" class="projets-types vo-brut" role="radiogroup" aria-labelledby="projet-modele-label"></div>
           <div id="projet-bd" class="projets-colonne vo-brut" hidden>
             <div class="projets-types" role="radiogroup" aria-label="Nombre d'albums">
               <label class="projets-type"><input type="radio" name="projet-albums" value="un" checked><strong>Un album</strong><small>Des planches, sans albums</small></label>
@@ -152,8 +158,9 @@ const Projets = {
             ${this.liste.map(p => `<option value="${esc(p.slug)}" ${p.slug === PROJET ? 'selected' : ''}>Copier ceux de ${esc(p.nom)}</option>`).join('')}
             <option value="__defaut">Réglages par défaut</option>
           </select>
-          <p class="an-note">Seuls les réglages sont copiés. Le nouveau projet démarre sans épisodes ni scripts.</p>
+          <p class="an-note">Seuls les réglages sont copiés. Le nouveau projet démarre sans scripts ; un modèle ne prépare que la structure et des repères.</p>
           <button type="button" class="btn btn-primary btn-sm" onclick="Projets.creer()">Créer le projet</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="DEMO.proposer()">Projet de démonstration</button>
         </div>
       </div>
       ${this.corbeille.length ? `
@@ -168,10 +175,10 @@ const Projets = {
       <div class="projets-bloc">
         ${Roman.film ? `
         <p class="an-label">Importer le scénario dans ${esc(this.actuel()?.nom || '')}</p>
-        <p class="an-note vo-brut">Formats : Final Draft (.fdx), Fountain, Highland, Fade In, Celtx, PDF de scénario, Word, LibreOffice, RTF et texte. WriterDuet et Movie Magic : exporte d'abord en Final Draft ou en Fountain.</p>
+        <p class="an-note vo-brut">Formats : Final Draft (.fdx), Fountain, Highland, Fade In, Celtx, Montage, PDF de scénario, Word, LibreOffice, RTF et texte. WriterDuet et Movie Magic : exporte d'abord en Final Draft ou en Fountain. Un autre format : l'app regarde ce que contient le fichier et en tire le texte, à vérifier dans l'aperçu.</p>
         <p class="an-note vo-brut">Chaque INT. ou EXT. ouvre une séquence. Le film est coupé en actes aux proportions habituelles ; tu pourras déplacer les coupures dans Écriture → Structure.</p>
         <div class="an-ligne">
-          <input id="import-fichiers" type="file" accept="${FILM_FORMATS}" aria-label="Choisir le scénario" onchange="Projets.choisirScenario(this.files)">
+          <input id="import-fichiers" type="file" aria-label="Choisir le scénario" onchange="Projets.choisirScenario(this.files)">
           <label class="an-label" for="import-actes">Actes</label>
           <select id="import-actes" onchange="Projets.apercuScenario()">${[1, 2, 3, 4, 5].map(n => `<option value="${n}" ${n === 3 ? 'selected' : ''}>${n}</option>`).join('')}</select>
         </div>` : Roman.genre ? `
@@ -182,27 +189,29 @@ const Projets = {
           jeu: 'Formats : Twine (.twee), Yarn (.yarn), Ink (.ink), Word, texte. « CHAPITRE 2 » ouvre un chapitre, « LIEU : Le port » (ou un titre) un lieu. Dans un lieu : « OBJET : corde », « SORTIE : La falaise [si corde] », « ÉNIGME : Réparer : rame + corde -> barque », « NOM : réplique », « >> choix », « DONNE : clé ».',
         }[Roman.type]} Ce qui a déjà un texte n'est jamais écrasé.</p>
         <div class="an-ligne">
-          <input id="import-fichiers" type="file" multiple accept="${GENRES_FORMATS}" aria-label="Choisir les fichiers" onchange="Projets.choisirManuscrit(this.files)">
+          <input id="import-fichiers" type="file" multiple aria-label="Choisir les fichiers" onchange="Projets.choisirManuscrit(this.files)">
           <label class="an-label" for="import-saison">Premier ${Roman.haut.s}</label><input id="import-saison" class="an-nombre" type="number" min="1" value="1" onchange="Projets.numeroterManuscrit()">
         </div>` : Roman.actif || Roman.bd ? `
         <p class="an-label">Importer ${Roman.bd ? 'le scénario' : 'le manuscrit'} dans ${esc(this.actuel()?.nom || '')}</p>
-        <p class="an-note vo-brut">Formats : Word, LibreOffice, ePub, RTF, PDF, HTML, Markdown, texte, Fountain, et Scrivener compressé en .zip. Pages et Google Docs : exporte d'abord en Word.</p>
+        <p class="an-note vo-brut">Formats : Word, LibreOffice, ePub, RTF, PDF, HTML, Markdown, texte, Fountain, et Scrivener compressé en .zip. Pages et Google Docs : exporte d'abord en Word. Un autre format : l'app regarde ce que contient le fichier et en tire le texte, à vérifier dans l'aperçu.</p>
         <p class="an-note vo-brut">${Roman.bd
           ? `Une ligne « PLANCHE 3 » (ou PAGE 3) ouvre une planche${Roman.plusieurs ? ', « Album 2 » ou « Tome 2 » ouvre un album' : ''}. Dans la planche, « CASE 2 » (ou PANEL 2, VIGNETTE 2) ouvre une case : la description suit, puis une ligne « MARIE : » par bulle. RÉCITATIF : et SFX : sont lus comme tels. Une planche qui a déjà un texte n'est jamais écrasée.`
           : `Un titre « Chapitre 3 » ou un titre de niveau 1 ou 2 ouvre un chapitre${Roman.plusieurs ? ', « Livre 2 » ou « Tome 2 » ouvre un livre' : ''}. Une ligne *** coupe une scène. Un fichier sans titre devient un chapitre. Un chapitre qui a déjà un texte n'est jamais écrasé.`}</p>
         <div class="an-ligne">
-          <input id="import-fichiers" type="file" multiple accept="${ROMAN_FORMATS}" aria-label="Choisir le manuscrit" onchange="Projets.choisirManuscrit(this.files)">
+          <input id="import-fichiers" type="file" multiple aria-label="Choisir le manuscrit" onchange="Projets.choisirManuscrit(this.files)">
           ${Roman.plusieurs ? `<label class="an-label" for="import-saison">Premier ${Roman.bd ? 'album' : 'livre'}</label><input id="import-saison" class="an-nombre" type="number" min="1" value="1" onchange="Projets.numeroterManuscrit()">` : ''}
         </div>` : `
         <p class="an-label">Importer des scripts dans ${esc(this.actuel()?.nom || '')}</p>
-        <p class="an-note">Formats : .txt, .fountain, .md, .pdf, Word, LibreOffice, RTF et HTML. Un nom comme S2E05 ou 2x05 place le script tout seul. Un épisode qui a déjà un script n'est jamais écrasé.</p>
+        <p class="an-note">Formats : .txt, .fountain, .md, .pdf, Final Draft, Montage, Celtx, Word, LibreOffice, RTF et HTML ; un autre format, l'app y cherche le texte. Un nom comme S2E05, 2x05 ou « Saison 2 épisode 5 » place le script tout seul. Un épisode qui a déjà un script n'est jamais écrasé.</p>
         <div class="an-ligne">
-          <input id="import-fichiers" type="file" multiple accept=".txt,.fountain,.md,.pdf,.docx,.odt,.rtf,.html,.htm,text/plain,application/pdf" aria-label="Choisir les scripts" onchange="Projets.choisirFichiers(this.files)">
+          <input id="import-fichiers" type="file" multiple aria-label="Choisir les scripts" onchange="Projets.choisirFichiers(this.files)">
+          <label class="btn btn-secondary btn-sm ct-fichier">Choisir un dossier<input type="file" webkitdirectory multiple aria-label="Choisir le dossier de la série" onchange="Projets.choisirDossier(this.files); this.value = ''"></label>
           <label class="an-label" for="import-saison">Saison si le nom ne la donne pas</label>
           <input id="import-saison" class="an-nombre" type="number" min="1" value="1" onchange="Projets.renumeroter()">
         </div>`}
         <div id="import-apercu"></div>
         <div id="import-noms"></div>
+        <div id="import-roles"></div>
       </div>
     `;
     this._typeParDefaut();
@@ -234,7 +243,8 @@ const Projets = {
   async _lireTexte(fichier, garderTitres = false) {
     const octets = await fichier.arrayBuffer();
     if (/\.pdf$/i.test(fichier.name)) return this._lirePdf(octets);
-    if (ROMAN_FORMATS_TEXTE.test(fichier.name) || !/\.[a-z0-9]+$/i.test(fichier.name)) {
+    // Un fichier sans extension ou d'un format inconnu passe par le serveur, qui regarde son contenu
+    if (ROMAN_FORMATS_TEXTE.test(fichier.name)) {
       try { return new TextDecoder('utf-8', { fatal: true }).decode(octets); }
       catch (e) { return new TextDecoder('windows-1252').decode(octets); }
     }
@@ -243,6 +253,12 @@ const Projets = {
     for (let i = 0; i < vue.length; i += 0x8000) binaire += String.fromCharCode(...vue.subarray(i, i + 0x8000));
     const res = await api.post('ecriture_extraire', { nom: fichier.name, donnees: btoa(binaire) });
     if (res.error) throw new Error(res.error);
+    // Les rôles d'un fichier Montage, et leurs notes, sont gardés pour les proposer aux fiches personnages
+    if (Array.isArray(res.roles)) for (const r of res.roles) {
+      const cle = String(r.nom).toLowerCase();
+      const avant = this.rolesTrouves.get(cle);
+      if (!avant || String(r.notes).length > String(avant.notes).length) this.rolesTrouves.set(cle, { nom: r.nom, notes: r.notes || '' });
+    }
     return garderTitres ? res.texte : res.texte.replace(/^#{1,6}\s+/gm, '');
   },
 
@@ -267,8 +283,41 @@ const Projets = {
 
   async choisirFichiers(fichiers) {
     const tries = [...fichiers].sort((a, b) => a.name.localeCompare(b.name, 'fr', { numeric: true }));
+    this.rolesTrouves = new Map();
     this.fichiers = tries.map(f => ({ fichier: f, nom: f.name, ...this._lireNomFichier(f.name), auto: false, etat: '' }));
     this.renumeroter();
+  },
+
+  // Tout un dossier : les sous-dossiers « Saison 2 » donnent la saison, les anciennes copies sont écartées,
+  // et si deux fichiers donnent le même épisode, le plus récent gagne
+  async choisirDossier(fichiers) {
+    const formats = /\.(txt|fountain|md|markdown|pdf|fdx|montage|celtx|highland|fadein|docx|odt|rtf|html?)$/i;
+    const ancien = /\b(old|ancien(ne)?|copie|copy|backup|sauvegarde)\b|\[old\]/i;
+    let ecartes = 0;
+    const parEpisode = new Map();
+    const sansNumero = [];
+    for (const f of fichiers) {
+      const chemin = (f.webkitRelativePath || f.name).normalize('NFC');
+      if (chemin.split('/').some(p => p.startsWith('.')) || f.name.startsWith('~$') || !formats.test(f.name)) continue;
+      if (ancien.test(f.name)) { ecartes++; continue; }
+      const lu = this._lireNomFichier(f.name);
+      if (!lu.saison) {
+        const dossier = chemin.split('/').slice(0, -1).reverse().map(d => d.match(/(?:saison|season|livre|tome|s)\s*(\d{1,2})\b/i)).find(Boolean);
+        const ep = f.name.normalize('NFC').match(/(?:[ée]p(?:isode)?|chapitre|ch)\.?\s*(\d{1,3})/i);
+        if (dossier && ep) Object.assign(lu, { saison: Number(dossier[1]), numero: Number(ep[1]), titre: lu.titre.replace(ep[0], '').replace(/^[\s_.:-]+|[\s_.:-]+$/g, '') });
+      }
+      if (!lu.saison) { sansNumero.push(f); continue; }
+      const cle = `${lu.saison}:${lu.numero}`;
+      const avant = parEpisode.get(cle);
+      if (avant) ecartes++;
+      if (!avant || avant.fichier.lastModified < f.lastModified) parEpisode.set(cle, { fichier: f, nom: chemin, ...lu, auto: false, etat: '' });
+    }
+    this.rolesTrouves = new Map();
+    this.fichiers = [...parEpisode.values(), ...sansNumero.map(f => ({ fichier: f, nom: f.webkitRelativePath || f.name, ...this._lireNomFichier(f.name), auto: false, etat: '' }))]
+      .sort((a, b) => (a.saison - b.saison) || (a.numero - b.numero) || a.nom.localeCompare(b.nom, 'fr', { numeric: true }));
+    this.renumeroter();
+    if (!this.fichiers.length) toast('Aucun script reconnu dans ce dossier.', 'info');
+    else toast(`${parEpisode.size} épisode(s) reconnu(s)${sansNumero.length ? `, ${sansNumero.length} fichier(s) sans numéro` : ''}${ecartes ? ` · ${ecartes} ancienne(s) copie(s) écartée(s)` : ''}.`, 'success');
   },
 
   // Les fichiers sans numéro se suivent dans la saison choisie
@@ -430,6 +479,49 @@ const Projets = {
     toast(`${importes} script(s) importé(s)`, 'success');
     this.liste = await api.get('projets');
     await this._chargerNoms();
+    await this.proposerRoles('import-roles');
+  },
+
+  // ─── Les rôles des fichiers Montage : leurs notes vont dans les fiches personnages ───
+
+  rolesTrouves: new Map(),
+
+  async proposerRoles(slotId) {
+    const slot = document.getElementById(slotId);
+    const roles = [...this.rolesTrouves.values()];
+    if (!slot || !roles.length) { if (slot) slot.innerHTML = ''; return; }
+    const res = await api.post('roles_fiches', { roles });
+    if (res.error) { toast(res.error, 'error'); return; }
+    this.rolesApercu = res.roles.map(r => ({ ...r, garder: !r.deja && (Boolean(r.notes) || !r.personnage_id), creer: false }));
+    this._rolesSlot = slotId;
+    this._rendreRoles();
+  },
+
+  _rendreRoles() {
+    const slot = document.getElementById(this._rolesSlot);
+    if (!slot || !this.rolesApercu) return;
+    const l = this.rolesApercu;
+    const utiles = l.filter(r => !r.deja && (r.notes || !r.personnage_id));
+    if (!utiles.length) { slot.innerHTML = '<p class="an-note">Les notes des rôles de ces fichiers Montage sont déjà dans les fiches.</p>'; return; }
+    slot.innerHTML = `<section class="an-carte">
+      <h3 class="an-label">Les rôles trouvés dans les fichiers Montage</h3>
+      <p class="an-note">Montage gardait des notes sur chaque rôle. Coche celles à ajouter : elles vont à la fin des caractéristiques de la fiche, sous « Notes de Montage ». Rien n'est effacé. Un rôle sans fiche n'en crée une que si tu le demandes.</p>
+      <ul class="ec-liste">${l.map((r, i) => (r.deja || (!r.notes && r.personnage_id)) ? '' : `<li><span><label class="interface-case"><input type="checkbox" ${r.garder ? 'checked' : ''} onchange="Projets.rolesApercu[${i}].garder = this.checked"> <strong>${esc(r.nom)}</strong></label>
+        → ${r.personnage_id ? `fiche de ${esc(r.personnage)}` : `<label class="interface-case"><input type="checkbox" ${r.creer ? 'checked' : ''} onchange="Projets.rolesApercu[${i}].creer = this.checked"> créer une fiche</label>`}</span>
+        ${r.notes ? `<span class="an-note">${esc(r.notes.length > 160 ? `${r.notes.slice(0, 160)}…` : r.notes)}</span>` : '<span class="an-note">sans note</span>'}</li>`).join('')}</ul>
+      <button type="button" class="btn btn-primary btn-sm" onclick="Projets.appliquerRoles()">Ajouter aux fiches</button>
+    </section>`;
+  },
+
+  async appliquerRoles() {
+    const res = await api.post('roles_fiches', { roles: this.rolesApercu, appliquer: true });
+    if (res.error) { toast(res.error, 'error'); return; }
+    window.DataStore?.invalidateForMutation('personnages');
+    toast(`${res.completees} fiche(s) complétée(s), ${res.creees} créée(s).`, 'success');
+    this.rolesTrouves = new Map();
+    this.rolesApercu = null;
+    const slot = document.getElementById(this._rolesSlot);
+    if (slot) slot.innerHTML = '';
   },
 
   // ─── Personnages trouvés dans les scripts ────────────────────────────────
@@ -508,6 +600,8 @@ const Projets = {
 
   async _rafraichir() {
     this.liste = await api.get('projets');
+    this.modelesPerso = await api.get('projets/modeles').catch(() => []);
+    if (!Array.isArray(this.modelesPerso)) this.modelesPerso = [];
     this.rendrePanel();
   },
 
@@ -521,7 +615,8 @@ const Projets = {
     const forme = document.querySelector('input[name="projet-forme"]:checked')?.value || '';
     const format = document.getElementById('projet-format')?.value || 'fb';
     const storyboard = document.getElementById('projet-storyboard')?.checked || false;
-    const res = await api.post('projets/creer', { nom, source, type, livres, forme, format, storyboard });
+    const modele = document.querySelector('input[name="projet-modele"]:checked')?.value || '';
+    const res = await api.post('projets/creer', { nom, source, type, livres, forme, format, storyboard, modele });
     if (res.error) { toast(res.error, 'error'); return; }
     if (source !== null) this._copierNavigateur(source, res.slug);
     if (confirm(`« ${nom} » est créé. L'ouvrir maintenant ?`)) { this.changer(res.slug); return; }
@@ -555,6 +650,14 @@ const Projets = {
       bloc.innerHTML = formes.map(([v, l, d], i) => `<label class="projets-type"><input type="radio" name="projet-forme" value="${v}" ${i ? '' : 'checked'}><strong>${l}</strong><small>${d}</small></label>`).join('');
     }
     document.getElementById('projet-bd').hidden = type !== 'bd';
+    // Un modèle prépare la structure (saisons, épisodes, actes, chapitres) avec des repères ; il n'écrit rien de l'histoire
+    const modeles = document.getElementById('projet-modele');
+    if (modeles && modeles.dataset.type !== type) {
+      modeles.dataset.type = type;
+      const perso = (this.modelesPerso || []).filter(m => m.type === type).map(m => [`perso:${m.id}`, m.nom, `Ton modèle · ${m.episodes} ${m.episodes > 1 ? 'parties' : 'partie'}, sans les textes`, m.id]);
+      modeles.innerHTML = [['', 'Projet vide', 'Tu crées tout toi-même'], ...(MODELES_TYPE[type] || []), ...perso]
+        .map(([v, l, d, id], i) => `<label class="projets-type"><input type="radio" name="projet-modele" value="${esc(v)}" ${i ? '' : 'checked'}><strong>${esc(l)}</strong><small>${esc(d)}${id ? ` · <button type="button" class="ec-lien" onclick="event.preventDefault(); Projets.retirerModele('${esc(id)}')">retirer</button>` : ''}</small></label>`).join('');
+    }
     document.getElementById('projet-storyboard-aide').textContent = {
       serie: 'Chaque scène se découpe en plans dessinés, avec valeur, mouvement et durée.',
       roman: 'Dessine les scènes clés comme au cinéma : utile pour un pitch ou une adaptation.',
@@ -670,6 +773,61 @@ const Projets = {
     if (res.error) { toast(res.error, 'error'); return; }
     if (slug === PROJET) { location.reload(); return; }
     await this._rafraichir();
+  },
+
+  // Un modèle personnel : la structure (saisons, épisodes, titres, repères) et les réglages, sans aucun texte
+  async enregistrerModele(slug) {
+    const p = this.liste.find(x => x.slug === slug);
+    const nom = prompt('Nom du modèle', `Modèle ${p.nom}`)?.trim();
+    if (!nom) return;
+    const res = await api.post('projets/modele', { slug, nom });
+    if (res.error) { toast(res.error, 'error'); return; }
+    toast(`Modèle « ${res.nom} » enregistré : ${res.episodes} partie(s), sans les textes. Il est proposé en créant un projet.`, 'success');
+    await this._rafraichir();
+  },
+
+  async retirerModele(id) {
+    if (!confirm('Retirer ce modèle ? Les projets créés avec lui ne changent pas.')) return;
+    const res = await api.post('projets/retirer_modele', { id });
+    if (res.error) { toast(res.error, 'error'); return; }
+    await this._rafraichir();
+  },
+
+  // Un roman découpé en épisodes de longueur voisine, coupés de préférence sur une fin de chapitre qui donne envie
+  // de continuer. L'app ne réécrit rien : elle propose seulement où couper.
+  async decouper(slug, nombre) {
+    const p = this.liste.find(x => x.slug === slug);
+    const d = this._decoupe?.slug === slug ? this._decoupe.d : await this._api(slug, 'roman_sens');
+    this._decoupe = { slug, d };
+    const ch = d?.chapitres || [];
+    if (ch.length < 2) { toast('Il faut au moins deux chapitres.', 'info'); return; }
+    const total = ch.reduce((t, c) => t + c.mots, 0);
+    const n = Math.max(2, Math.min(ch.length, Number(nombre) || Math.min(ch.length, Math.max(2, Math.round(total / 9000)))));
+    const accroche = c => /[?…]\s*[»"]?$|\.\.\.\s*[»"]?$/.test(c.fin) ? 2 : /!\s*[»"]?$/.test(c.fin) ? 1 : 0;
+    const episodes = [];
+    let debut = 0;
+    for (let k = 1; k <= n; k++) {
+      if (k === n) { episodes.push(ch.slice(debut)); break; }
+      const reste = ch.slice(debut).reduce((t, c) => t + c.mots, 0);
+      const cible = reste / (n - k + 1);
+      let cumul = 0, meilleur = null;
+      for (let i = debut; i < ch.length - (n - k); i++) {
+        cumul += ch[i].mots;
+        const ecart = Math.abs(cumul - cible) / cible;
+        if (ecart > 0.35 && cumul > cible) break;
+        const score = ecart - accroche(ch[i]) * 0.12;
+        if (ecart <= 0.35 && (!meilleur || score < meilleur.score)) meilleur = { i, score };
+      }
+      const fin = meilleur ? meilleur.i : Math.min(ch.length - (n - k) - 1, debut);
+      episodes.push(ch.slice(debut, fin + 1));
+      debut = fin + 1;
+    }
+    const minutes = mots => Math.round(mots / 150);
+    modal.open(`<div class="modal-title">Découper « ${esc(p?.nom || '')} » en épisodes</div>
+      <p class="an-note">Des épisodes de longueur voisine, coupés de préférence sur une fin de chapitre qui pose une question ou reste en suspens (★). Rien n'est réécrit ni créé : c'est une proposition, pour préparer une adaptation.</p>
+      <div class="an-ligne"><label class="an-label" for="dec-n">Nombre d'épisodes</label><input id="dec-n" class="an-nombre" type="number" min="2" max="${ch.length}" value="${n}" onchange="Projets.decouper('${esc(slug)}', this.value)">
+        <span class="an-note">${total.toLocaleString('fr-FR')} mots · environ ${minutes(total / n)} min de lecture à voix haute par épisode</span></div>
+      <ol class="decoupe-liste">${episodes.map(l => { const mots = l.reduce((t, c) => t + c.mots, 0); const der = l[l.length - 1]; return `<li><strong>${esc(l[0].code)}${l.length > 1 ? ` → ${esc(der.code)}` : ''}</strong> <span class="an-note">${l.length} chapitre(s) · ${mots.toLocaleString('fr-FR')} mots</span><br><span class="an-note vo-brut">${accroche(der) ? '★ ' : ''}finit sur « ${esc(der.fin.slice(-110))} »</span></li>`; }).join('')}</ol>`);
   },
 
   async dupliquer(slug) {

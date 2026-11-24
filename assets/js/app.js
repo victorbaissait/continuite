@@ -25,7 +25,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   savedTab = Interface.ongletVisible(savedTab);
   localStorage.setItem(cleProjet(TAB_STORAGE_KEY), savedTab);
   switchTab(savedTab);
-  await initTab(savedTab);
+  try {
+    await initTab(savedTab);
+  } finally {
+    // L'app est prête : les commandes de l'app de bureau (fichier ouvert au lancement…) peuvent passer
+    window.appPrete = true;
+    window.dispatchEvent(new Event('app-prete'));
+  }
 });
 
 function switchTab(tab) {

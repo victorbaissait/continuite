@@ -132,3 +132,54 @@ function handleNoms(PDO $db, string $method, ?int $id, array $body): void {
             echo json_encode(['error' => 'Méthode non autorisée']);
     }
 }
+
+/**
+ * Les rôles d'un fichier Montage vers les fiches personnages.
+ * Aperçu : chaque rôle avec la fiche qui lui correspond (même règle que les scripts : nom exact ou alias).
+ * Appliquer : la note s'ajoute à la fin des caractéristiques de la fiche, une seule fois ; un rôle sans fiche
+ * n'en crée une que si on l'a coché. Rien n'est jamais effacé.
+ */
+function handleRolesFiches(PDO $db, array $body): array {
+    $roles = [];
+    foreach (array_slice(is_array($body['roles'] ?? null) ? $body['roles'] : [], 0, 500) as $r) {
+        if (!is_array($r)) continue;
+        $nom = trim(mb_substr(texteCorps($r['nom'] ?? ''), 0, 80));
+        $notes = trim(mb_substr(texteCorps($r['notes'] ?? ''), 0, 5000));
+        if ($nom !== '') $roles[] = ['nom' => $nom, 'notes' => $notes, 'creer' => !empty($r['creer']), 'garder' => !array_key_exists('garder', $r) || !empty($r['garder'])];
+    }
+    $personnages = $db->query('SELECT id, prenom, nom, nom_affichage, caracteristiques FROM personnages')->fetchAll();
+    $apercu = [];
+    foreach ($roles as $r) {
+        $p = matcherPersonnageDepuisNom($r['nom'], $personnages);
+        $deja = $p && $r['notes'] !== '' && str_contains((string)$p['caracteristiques'], $r['notes']);
+        $apercu[] = ['nom' => $r['nom'], 'notes' => $r['notes'], 'personnage_id' => $p ? (int)$p['id'] : null,
+            'personnage' => $p ? personnageLabel($p) : null, 'deja' => $deja, 'creer' => $r['creer'], 'garder' => $r['garder']];
+    }
+    if (empty($body['appliquer'])) return ['roles' => $apercu];
+
+    $completees = 0;
+    $creees = 0;
+    $db->beginTransaction();
+    $maj = $db->prepare('UPDATE personnages SET caracteristiques = ? WHERE id = ?');
+    $ajout = $db->prepare('INSERT INTO personnages (prenom, nom, caracteristiques) VALUES (?, ?, ?)');
+    foreach ($apercu as $r) {
+        if (!$r['garder'] || $r['deja']) continue;
+        if ($r['personnage_id']) {
+            if ($r['notes'] === '') continue;
+            $st = $db->prepare('SELECT caracteristiques FROM personnages WHERE id = ?');
+            $st->execute([$r['personnage_id']]);
+            $avant = trim((string)$st->fetchColumn());
+            if (str_contains($avant, $r['notes'])) continue;
+            $maj->execute([trim($avant . ($avant !== '' ? "\n\n" : '') . "Notes de Montage :\n" . $r['notes']), $r['personnage_id']]);
+            $completees++;
+        } elseif ($r['creer']) {
+            // « JIM MARTIN » devient Jim Martin ; le premier mot est le prénom
+            $mots = preg_split('/\s+/u', mb_convert_case(mb_strtolower($r['nom']), MB_CASE_TITLE));
+            $prenom = array_shift($mots);
+            $ajout->execute([$prenom, $mots ? implode(' ', $mots) : null, $r['notes'] !== '' ? "Notes de Montage :\n" . $r['notes'] : null]);
+            $creees++;
+        }
+    }
+    $db->commit();
+    return ['completees' => $completees, 'creees' => $creees];
+}

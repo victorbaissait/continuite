@@ -24,6 +24,22 @@ function route(PDO $db, string $method, string $path, array $body): void {
         handleFilsMentions($db, $method, $body);
         return;
     }
+    if (in_array($resource, ['aveugle', 'objets_oublies', 'annee_ecriture', 'roman_sens', 'film_lisibilite', 'portraits', 'conduite', 'accroches', 'chutier', 'registres'], true)) {
+        handleCreatif($db, $resource, $method);
+        return;
+    }
+    if ($resource === 'parcours') {
+        handleParcours($db, $method);
+        return;
+    }
+    if ($resource === 'feuille_style') {
+        handleFeuilleStyle($db, $method, $body);
+        return;
+    }
+    if ($resource === 'remplacer_serie') {
+        handleRemplacerSerie($db, $method, $body);
+        return;
+    }
     if ($resource === 'etats') {
         handleEtats($db, $method, $body);
         return;
@@ -109,6 +125,7 @@ function route(PDO $db, string $method, string $path, array $body): void {
         case 'personnage_moments': handlePersonnageMoments($db, $method, $id, $body); break;
         case 'personnage_signatures': handlePersonnageSignatures($db, $method, $id, $body); break;
         case 'noms':       handleNoms($db, $method, $id, $body); break;
+        case 'roles_fiches': echo json_encode($method === 'POST' ? handleRolesFiches($db, $body) : ['error' => 'POST attendu'], JSON_UNESCAPED_UNICODE); break;
         case 'lieux':      handleLieux($db, $method, $id, $body); break;
         case 'themes':     handleThemes($db, $method, $id, $body); break;
         case 'bible_notes': handleBibleNotes($db, $method, $id, $body); break;
@@ -514,6 +531,12 @@ function ensureStatsTablesBackfilled(PDO $db): void {
     static $done = false;
     if ($done) return;
     $done = true;
+
+    // Déjà fait (le cas courant) : une simple lecture, sans rien écrire. Plusieurs requêtes simultanées
+    // qui écrivaient ici, même pour rien, se bloquaient entre elles (« database is locked »).
+    try {
+        if ($db->query("SELECT value FROM app_meta WHERE key = 'stats_tables_backfilled_v1'")->fetchColumn() === '1') return;
+    } catch (Throwable $e) { /* table app_meta absente : on continue */ }
 
     if (function_exists('ensureStatsTables')) ensureStatsTables($db);
 
@@ -2807,6 +2830,11 @@ function handleUpload(PDO $db, array $body): void {
         return;
     }
 
+    echo json_encode(enregistrerScriptEpisode($db, $epId, $texte));
+}
+
+// Enregistre le script d'un épisode et tout ce qui en découle : statistiques, scènes, décors, présence des personnages
+function enregistrerScriptEpisode(PDO $db, int $epId, string $texte): array {
     $stats = analyserTexte($texte);
     enrichirStatsLieuxEpisode($db, $epId, $stats, true);
 
@@ -2829,7 +2857,7 @@ function handleUpload(PDO $db, array $body): void {
 
     syncPresencePersonnages($db, $epId, $stats);
 
-    echo json_encode($stats);
+    return $stats;
 }
 
 /**
@@ -4263,7 +4291,45 @@ function getLecteurDetail(PDO $db, int $lecteurId): ?array {
     return $lecteur;
 }
 
+// Tous les lecteurs d'un coup d'œil : qui a reçu quoi, qui a répondu, la moyenne de chaque épisode,
+// les relances (envoyé il y a plus de deux semaines, sans retour) et les épisodes changés depuis l'envoi
+function lecteursEnsemble(PDO $db): array {
+    $lecteurs = $db->query('SELECT id, nom, priorite FROM lecteurs ORDER BY ordre, nom COLLATE NOCASE')->fetchAll();
+    $episodes = $db->query('SELECT e.id, e.numero_episode, e.titre, e.texte_episode, s.numero AS saison FROM episodes e JOIN saisons s ON s.id = e.saison_id
+        WHERE e.id IN (SELECT episode_id FROM lecteur_episodes) ORDER BY s.numero, e.numero_episode, e.id')->fetchAll();
+    $critiques = [];
+    foreach ($db->query('SELECT lecteur_id, episode_id, COUNT(*) AS n FROM lecteur_episode_critiques GROUP BY lecteur_id, episode_id')->fetchAll() as $c) $critiques["{$c['lecteur_id']}:{$c['episode_id']}"] = (int)$c['n'];
+    $script = [];
+    foreach ($episodes as $e) $script[(int)$e['id']] = trim((string)$e['texte_episode']) !== '' ? md5(trim((string)$e['texte_episode'])) : null;
+    $cases = [];
+    $relances = [];
+    $aujourdhui = new DateTime('today');
+    foreach ($db->query('SELECT lecteur_id, episode_id, envoye_le, note, commentaire, empreinte FROM lecteur_episodes')->fetchAll() as $r) {
+        $cle = "{$r['lecteur_id']}:{$r['episode_id']}";
+        $repondu = $r['note'] !== null || trim((string)$r['commentaire']) !== '' || isset($critiques[$cle]);
+        $jours = preg_match('/^\d{4}-\d{2}-\d{2}/', (string)$r['envoye_le']) ? (int)$aujourdhui->diff(new DateTime(substr($r['envoye_le'], 0, 10)))->days : null;
+        $change = $r['empreinte'] !== null && ($script[(int)$r['episode_id']] ?? null) !== null && $r['empreinte'] !== $script[(int)$r['episode_id']];
+        $cases[$cle] = ['envoye' => (string)$r['envoye_le'], 'note' => $r['note'] === null ? null : (float)$r['note'], 'repondu' => $repondu, 'jours' => $jours, 'change' => $change];
+        if (!$repondu && $jours !== null && $jours >= 14) $relances[] = ['lecteur' => (int)$r['lecteur_id'], 'episode' => (int)$r['episode_id'], 'jours' => $jours];
+    }
+    usort($relances, fn($a, $b) => $b['jours'] <=> $a['jours']);
+    $moyennes = [];
+    foreach ($episodes as $e) {
+        $notes = array_values(array_filter(array_map(fn($l) => $cases["{$l['id']}:{$e['id']}"]['note'] ?? null, $lecteurs), fn($n) => $n !== null));
+        $moyennes[(int)$e['id']] = $notes ? ['moyenne' => round(array_sum($notes) / count($notes), 1), 'n' => count($notes), 'ecart' => round(max($notes) - min($notes), 1)] : null;
+    }
+    return [
+        'lecteurs' => array_map(fn($l) => ['id' => (int)$l['id'], 'nom' => (string)$l['nom'], 'priorite' => (string)$l['priorite']], $lecteurs),
+        'episodes' => array_map(fn($e) => ['id' => (int)$e['id'], 'code' => sprintf('S%dE%02d', $e['saison'], $e['numero_episode']), 'titre' => (string)$e['titre']], $episodes),
+        'cases' => $cases, 'moyennes' => $moyennes, 'relances' => array_slice($relances, 0, 100),
+    ];
+}
+
 function handleLecteurs(PDO $db, string $method, array $parts, array $body): void {
+    if (($parts[1] ?? null) === 'ensemble' && $method === 'GET') {
+        echo json_encode(lecteursEnsemble($db), JSON_UNESCAPED_UNICODE);
+        return;
+    }
     if (($parts[1] ?? null) === 'ordre' && $method === 'PUT') {
         $ids = $body['ids'] ?? [];
         if (!is_array($ids)) { http_response_code(422); echo json_encode(['error' => 'Ordre invalide']); return; }
@@ -4288,7 +4354,7 @@ function handleLecteurs(PDO $db, string $method, array $parts, array $body): voi
 
     if (!$lecteurId) {
         if ($method === 'GET') {
-            echo json_encode($db->query("SELECT l.*, COUNT(le.episode_id) AS nb_episodes, ROUND(AVG(le.note), 1) AS note_moyenne
+            echo json_encode($db->query("SELECT l.*, COUNT(le.episode_id) AS nb_episodes, ROUND(AVG(le.note), 1) AS note_moyenne, MAX(le.envoye_le) AS dernier_envoi
                 FROM lecteurs l LEFT JOIN lecteur_episodes le ON le.lecteur_id = l.id
                 GROUP BY l.id ORDER BY l.ordre ASC, l.nom COLLATE NOCASE")->fetchAll());
             return;
@@ -4366,8 +4432,11 @@ function handleLecteurs(PDO $db, string $method, array $parts, array $body): voi
     if ($method === 'POST' && !$episodeId) {
         $episodeId = (int)($body['episode_id'] ?? 0);
         if (!$episodeId) { http_response_code(422); echo json_encode(['error' => 'Épisode obligatoire']); return; }
-        $st = $db->prepare('INSERT INTO lecteur_episodes (lecteur_id, episode_id, envoye_le, note, commentaire) VALUES (?, ?, ?, ?, ?) ON CONFLICT(lecteur_id, episode_id) DO UPDATE SET envoye_le=excluded.envoye_le, note=excluded.note, commentaire=excluded.commentaire, updated_at=CURRENT_TIMESTAMP');
-        $st->execute([$lecteurId, $episodeId, $body['envoye_le'] ?? date('Y-m-d'), ($body['note'] ?? '') !== '' ? (float)$body['note'] : null, trim(texteCorps($body['commentaire'] ?? '')) ?: null]);
+        $txt = $db->prepare('SELECT texte_episode FROM episodes WHERE id = ?');
+        $txt->execute([$episodeId]);
+        $script = (string)$txt->fetchColumn();
+        $st = $db->prepare('INSERT INTO lecteur_episodes (lecteur_id, episode_id, envoye_le, note, commentaire, empreinte) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(lecteur_id, episode_id) DO UPDATE SET envoye_le=excluded.envoye_le, note=excluded.note, commentaire=excluded.commentaire, empreinte=excluded.empreinte, updated_at=CURRENT_TIMESTAMP');
+        $st->execute([$lecteurId, $episodeId, $body['envoye_le'] ?? date('Y-m-d'), ($body['note'] ?? '') !== '' ? (float)$body['note'] : null, trim(texteCorps($body['commentaire'] ?? '')) ?: null, trim($script) !== '' ? md5(trim($script)) : null]);
         echo json_encode(['ok' => true]);
     } elseif ($method === 'PUT' && $episodeId) {
         $st = $db->prepare('UPDATE lecteur_episodes SET envoye_le = ?, note = ?, commentaire = ?, updated_at = CURRENT_TIMESTAMP WHERE lecteur_id = ? AND episode_id = ?');
