@@ -7,6 +7,8 @@ async function ouvrirOnglet(tab) {
   const bouton = document.querySelector(`.nav-btn[data-tab="${tab}"]`);
   if (!bouton) return false;
   if (!bouton.classList.contains('active')) bouton.click();
+  // Déjà affiché mais périmé (une donnée a changé ailleurs) : on le recharge, sinon on attendrait pour rien
+  else if (typeof initializedTabs !== 'undefined' && !initializedTabs.has(tab) && typeof initTab === 'function') initTab(tab);
   for (let i = 0; i < 200; i++) {
     if (typeof initializedTabs === 'undefined' || initializedTabs.has(tab)) break;
     await new Promise(r => setTimeout(r, 50));

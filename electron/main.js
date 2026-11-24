@@ -566,6 +566,16 @@ async function essaiNouveautes(dossier) {
   ok('dictionnaire', motsDico.includes('Zéphyrine') && motsDico.includes('Quarteau-Vlinsky'), { dico, trouves: motsDico.filter(m => /Zéphyrine|Quarteau/.test(m)) });
   for (const m of ['Zéphyrine', 'Quarteau-Vlinsky']) win.webContents.session.removeWordFromSpellCheckerDictionary(m);
 
+  // Un onglet affiché mais périmé (une donnée a changé ailleurs) se recharge tout de suite quand on y retourne
+  const perime = await js(`(async () => {
+    await ouvrirOnglet('settings');
+    window.dispatchEvent(new CustomEvent('lemenu:data-mutated', { detail: { resource: 'personnages' } }));
+    const avant = initializedTabs.has('settings');
+    const t = Date.now(); await ouvrirOnglet('settings');
+    return [avant, Date.now() - t, initializedTabs.has('settings')];
+  })()`);
+  ok('onglet_perime_recharge', Array.isArray(perime) && perime[0] === false && perime[1] < 3000 && perime[2] === true, perime);
+
   // Un fichier Montage déposé sur la fiche d'un épisode : le texte arrive dans la zone, à relire avant de l'analyser
   const exempleMontage = path.join(__dirname, 'essais', 'exemple.montage');
   if (fs.existsSync(exempleMontage)) {

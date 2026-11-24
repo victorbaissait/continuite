@@ -2,7 +2,7 @@
   "name": "continuite",
   "productName": "Continuité",
   "dossierDonnees": "Continuite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Atelier d'écriture local pour séries, films, romans, BD, théâtre, pub et jeux : personnages, secrets, continuité. Les données restent sur l'ordinateur.",
   "private": true,
   "main": "electron/main.js",
